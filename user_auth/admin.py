@@ -32,7 +32,7 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
 
 @admin.register(Badge)
 class BadgeAdmin(admin.ModelAdmin):
-    list_display = ('name', 'created_at')
+    list_display = ('name', 'score_threshold', 'created_at')
     search_fields = ('name',)
 
 

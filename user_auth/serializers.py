@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
-from .models import UserProfile
+from .models import UserProfile, Badge
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -52,6 +52,11 @@ COMMUNICATION_LEVEL_CHOICES = [
 class ProfileSerializer(serializers.ModelSerializer):
     minutes_limit = serializers.SerializerMethodField()
     minutes_remaining = serializers.SerializerMethodField()
+    badge_level = serializers.CharField(read_only=True)
+    game_score = serializers.IntegerField(read_only=True)
+    current_badge_icon = serializers.SerializerMethodField()
+    badge_progress = serializers.SerializerMethodField()
+
     class Meta:
         model = UserProfile
         fields = [
@@ -61,6 +66,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'monthly_minutes_used', 'minutes_limit', 'minutes_remaining',
             'current_streak', 'longest_streak', 'total_practice_days',
             'created_at', 'updated_at',
+            'badge_level', 'game_score', 'current_badge_icon', 'badge_progress',
         ]
         read_only_fields = [
             'id',
@@ -98,3 +104,60 @@ class ProfileSerializer(serializers.ModelSerializer):
         used = obj.monthly_minutes_used or 0
         remaining = limit - used
         return remaining if remaining > 0 else 0
+
+    def get_current_badge_icon(self, obj):
+        badge = None
+        if obj.badge_level and obj.badge_level != "none":
+            badge = obj.badges.filter(name__iexact=obj.badge_level).order_by(
+                "-score_threshold", "-created_at"
+            ).first()
+        if badge and badge.icon:
+            request = self.context.get("request")
+            url = badge.icon.url
+            return request.build_absolute_uri(url) if request is not None else url
+        return None
+
+    def get_badge_progress(self, obj):
+        """Return current score, next threshold, and progress for badge display."""
+        badges = {b.name.lower(): b.score_threshold for b in Badge.objects.all()}
+        bronze = badges.get("bronze", 0)
+        silver = badges.get("silver", 100)
+        gold = badges.get("gold", 500)
+        diamond = badges.get("diamond", 1000)
+        thresholds = [
+            ("none", 0),
+            ("bronze", bronze),
+            ("silver", silver),
+            ("gold", gold),
+            ("diamond", diamond),
+        ]
+        current_score = obj.game_score or 0
+        level = (obj.badge_level or "none").lower()
+        current_threshold = 0
+        next_threshold = bronze
+        next_badge_name = "Bronze"
+        for i, (name, th) in enumerate(thresholds):
+            if name == level:
+                current_threshold = th
+                if i + 1 < len(thresholds):
+                    next_threshold = thresholds[i + 1][1]
+                    next_badge_name = thresholds[i + 1][0].capitalize()
+                else:
+                    next_threshold = th
+                    next_badge_name = None
+                break
+        remaining = max(0, next_threshold - current_score) if next_badge_name else 0
+        range_size = next_threshold - current_threshold
+        progress_pct = (
+            min(100, round(100 * (current_score - current_threshold) / range_size))
+            if range_size > 0
+            else 100
+        ) if next_badge_name else 100
+        return {
+            "current_score": current_score,
+            "current_threshold": current_threshold,
+            "next_threshold": next_threshold,
+            "next_badge_name": next_badge_name,
+            "remaining": remaining,
+            "progress_pct": progress_pct,
+        }

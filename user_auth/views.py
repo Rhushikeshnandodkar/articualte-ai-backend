@@ -160,7 +160,7 @@ class ProfileView(generics.RetrieveUpdateAPIView):
         instance = self.get_object()
         # Keep streak numbers in sync whenever profile is fetched.
         streak_data = compute_and_update_profile_streaks(instance)
-        serializer = self.get_serializer(instance)
+        serializer = self.get_serializer(instance, context={"request": request})
         data = serializer.data
         data['suggested_topics'] = get_suggested_topics(instance)
         data['streak'] = streak_data

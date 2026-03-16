@@ -2,6 +2,39 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
+class Topic(models.Model):
+    LEVEL_BEGINNER = "beginner"
+    LEVEL_INTERMEDIATE = "intermediate"
+    LEVEL_ADVANCED = "advanced"
+    LEVEL_CHOICES = [
+        (LEVEL_BEGINNER, "Beginner"),
+        (LEVEL_INTERMEDIATE, "Intermediate"),
+        (LEVEL_ADVANCED, "Advanced"),
+    ]
+
+    title = models.CharField(max_length=255)
+    category = models.CharField(max_length=255, blank=True)
+    level = models.CharField(
+        max_length=20,
+        choices=LEVEL_CHOICES,
+        default=LEVEL_BEGINNER,
+    )
+    description = models.TextField(blank=True)
+    time_limit_seconds = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Optional per-topic speaking time limit in seconds. Leave empty for default (3 minutes).",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["category", "level", "title"]
+
+    def __str__(self):
+        return self.title
+
+
 class Conversation(models.Model):
     STATUS_ACTIVE = "active"
     STATUS_ENDED = "ended"
@@ -65,4 +98,17 @@ class ConversationMessage(models.Model):
 
     class Meta:
         ordering = ["conversation", "sequence"]
+
+
+class TopicProgress(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="topic_progress")
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="progress")
+    best_score = models.PositiveIntegerField(default=0)
+    attempts = models.PositiveIntegerField(default=0)
+    last_score = models.PositiveIntegerField(default=0)
+    last_completed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "topic")
+        ordering = ["-last_completed_at"]
 

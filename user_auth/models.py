@@ -17,6 +17,10 @@ class Badge(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     icon = models.FileField(upload_to="badges/", null=True, blank=True)
+    score_threshold = models.IntegerField(
+        default=0,
+        help_text="Minimum game_score required to earn this badge.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -73,6 +77,23 @@ class UserProfile(models.Model):
     email_verified = models.BooleanField(default=False)
     email_otp = models.CharField(max_length=6, null=True, blank=True)
     email_otp_expires_at = models.DateTimeField(null=True, blank=True)
+    # Daily practice topic (one per day per user)
+    daily_topic_title = models.CharField(max_length=255, null=True, blank=True)
+    daily_topic_description = models.TextField(null=True, blank=True)
+    daily_topic_date = models.DateField(null=True, blank=True, help_text="Date when daily topic was generated")
+    # Gamified score & badge for table topics
+    game_score = models.IntegerField(default=0, help_text="Gamified score from completed table topics")
+    badge_level = models.CharField(
+        max_length=20,
+        choices=[
+            ("none", "None"),
+            ("bronze", "Bronze"),
+            ("silver", "Silver"),
+            ("gold", "Gold"),
+            ("diamond", "Diamond"),
+        ],
+        default="none",
+    )
 
     class Meta:
         ordering = ['-created_at']

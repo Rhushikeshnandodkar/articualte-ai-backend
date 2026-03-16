@@ -4,6 +4,7 @@ import tempfile
 import os as os_module
 from django.http import HttpResponse
 from django.utils import timezone
+from django.db import models
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
@@ -13,11 +14,12 @@ from django.conf import settings
 
 from user_auth.models import UserProfile
 
-from .models import Conversation, ConversationMessage
+from .models import Conversation, ConversationMessage, Topic
 from .serializers import (
     ConversationListSerializer,
     ConversationDetailSerializer,
     CreateConversationSerializer,
+    TopicSerializer,
 )
 from .utils_stats import compute_conversation_stats
 from .utils_streaks import compute_and_update_profile_streaks
@@ -138,6 +140,15 @@ def text_to_speech_elevenlabs(text: str) -> bytes:
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def topic_list(request):
+    """List all active practice topics configured in admin."""
+    qs = Topic.objects.filter(is_active=True).order_by("category", "level", "title")
+    serializer = TopicSerializer(qs, many=True, context={"request": request})
+    return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def conversation_list(request):
     """List current user's conversations (newest first)."""
     qs = Conversation.objects.filter(user=request.user)
@@ -230,6 +241,46 @@ def update_user_profile_after_conversation(conv):
     compute_and_update_profile_streaks(profile)
 
 
+def _compute_table_topic_score(conv: Conversation) -> int:
+    """
+    Compute a gamified score for a table-topic style conversation using
+    filler words, pace, and duration. Returns an integer >= 1.
+    """
+    # Base score
+    score = 600
+
+    # Duration factor – reward speaking closer to 2 minutes (up to 3).
+    dur = conv.duration_seconds or 0
+    minutes = dur / 60.0
+    if minutes > 0:
+        target_min = 2.0
+        max_min = 3.0
+        dur_ratio = max(0.3, min(minutes / target_min, max_min / target_min))
+        score = int(score * dur_ratio)
+
+    # Filler words penalty.
+    filler = conv.filler_words_count or 0
+    filler_penalty = min(filler * 8, 250)
+    score -= filler_penalty
+
+    # Pace penalty – ideal around 120–150 wpm.
+    pace = conv.speech_speed_wpm or 0
+    if pace > 0:
+        ideal_min, ideal_max = 120.0, 150.0
+        if pace < ideal_min:
+            diff = ideal_min - pace
+        elif pace > ideal_max:
+            diff = pace - ideal_max
+        else:
+            diff = 0
+        pace_penalty = min(int(diff * 1.2), 250)
+        score -= pace_penalty
+
+    # Clamp score into a reasonable range and ensure it's positive.
+    score = max(10, min(score, 1000))
+    return int(score)
+
+
 def _get_active_plan_tier(profile: UserProfile) -> str:
     """
     Return 'free', 'builder', or 'performer' based on active subscription.
@@ -251,6 +302,29 @@ def _get_active_plan_tier(profile: UserProfile) -> str:
         return "performer"
     return "free"
 
+
+DAILY_TOPIC_PROMPT = """You are a creative, modern communication coach.
+
+Generate ONE engaging, open-ended daily speaking topic for an adult learner.
+
+The topic should:
+- be concrete and make the user immediately want to speak
+- feel like a real situation, thought, or feeling (not academic)
+- work in ANY field (general life, work, relationships, self-reflection, society, technology, etc.)
+- invite at least a 30–60 second answer
+
+Good examples of the STYLE (do NOT copy these):
+- "Tell me about the best day of your life. What made it so special?"
+- "Do you ever feel that your school days were the best days of your life? Why or why not?"
+- "If you could relive one ordinary day from the last year, which day would you choose and why?"
+
+Return ONLY a valid JSON object with exactly:
+{{
+  "title": "short one-line question (max 120 characters, no numbering, no quotes)",
+  "description": "one or two short sentences that give context and help the user understand what to talk about"
+}}
+"""
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def conversation_end(request, pk):
@@ -267,6 +341,78 @@ def conversation_end(request, pk):
     compute_conversation_stats(conv)
     conv.refresh_from_db()
     update_user_profile_after_conversation(conv)
+
+    # Update gamified topic progress and badge if this conversation matches a table topic.
+    try:
+        from .models import TopicProgress
+        topic_obj = Topic.objects.filter(title=conv.topic).first()
+        if topic_obj is not None:
+            # Compute a score for this specific table-topic attempt.
+            score = _compute_table_topic_score(conv)
+            progress, created = TopicProgress.objects.get_or_create(
+                user=conv.user,
+                topic=topic_obj,
+                defaults={"best_score": score, "last_score": score, "attempts": 1},
+            )
+            if not created:
+                progress.last_score = score
+                if score > progress.best_score:
+                    progress.best_score = score
+                progress.attempts = (progress.attempts or 0) + 1
+                progress.save(update_fields=["best_score", "last_score", "attempts", "last_completed_at"])
+
+            # Recompute overall game_score and badge for this user based on all topics.
+            from user_auth.models import UserProfile, Badge
+
+            try:
+                profile = UserProfile.objects.get(user=conv.user)
+            except UserProfile.DoesNotExist:
+                profile = None
+            if profile is not None:
+                total = (
+                    TopicProgress.objects.filter(user=conv.user)
+                    .aggregate(total=models.Sum("best_score"))
+                    .get("total")
+                    or 0
+                )
+                profile.game_score = total
+
+                # Resolve thresholds dynamically from Badge records by name.
+                badges = {b.name.lower(): b for b in Badge.objects.all()}
+                bronze_th = getattr(badges.get("bronze"), "score_threshold", None)
+                silver_th = getattr(badges.get("silver"), "score_threshold", None)
+                gold_th = getattr(badges.get("gold"), "score_threshold", None)
+                diamond_th = getattr(badges.get("diamond"), "score_threshold", None)
+
+                level = "none"
+                current_badge = None
+
+                # Range-based mapping using thresholds:
+                # score <= bronze_th   -> bronze
+                # bronze_th < score <= silver_th -> silver
+                # silver_th < score <= gold_th   -> gold
+                # score > gold_th (or >= diamond_th if set) -> diamond
+                if bronze_th is not None and total <= bronze_th:
+                    level = "bronze"
+                    current_badge = badges.get("bronze")
+                elif silver_th is not None and total <= silver_th:
+                    level = "silver"
+                    current_badge = badges.get("silver")
+                elif gold_th is not None and total <= gold_th:
+                    level = "gold"
+                    current_badge = badges.get("gold")
+                elif diamond_th is not None and total >= diamond_th:
+                    level = "diamond"
+                    current_badge = badges.get("diamond")
+
+                profile.badge_level = level
+                if current_badge is not None:
+                    profile.badges.add(current_badge)
+
+                profile.save(update_fields=["game_score", "badge_level", "updated_at"])
+    except Exception:
+        # Gamification should never break core stats; swallow errors.
+        pass
     return Response(ConversationDetailSerializer(conv).data)
 
 
@@ -295,6 +441,7 @@ Return ONLY a valid JSON array of objects. Each object must have exactly:
 - "title": string (short, vivid topic name, e.g. "Imagine you meet Elon Musk at a meetup", "If you were Prime Minister of India for a day")
 - "category": string (one word or short label, e.g. "Career", "Leadership", "Favorites", "Experience", "Imagination", "Tech", "Medicine")
 - "description": string (short, punchy teaser of 4 to 10 words describing the topic, e.g. "Describe how you’d use one day as PM", "Share a favourite book and why it matters")
+- "opening_question": string (ONE short, specific, open question in one sentence that makes the user start talking immediately about this exact topic. It must be concrete and natural, like: "In today’s geopolitical situation, what concerns you most about China and India, and why?" or "What is the most difficult feedback conversation you’ve ever had with a teammate?". Do NOT use generic templates like "When you think about X..." or "What comes to your mind?".)
 
 User profile:
 - Profession: {profession}
@@ -311,34 +458,45 @@ DEFAULT_TOPICS_STRUCTURED = [
         "title": "Imagine you meet Elon Musk at a small meetup",
         "category": "Imagination",
         "description": "Describe the conversation and questions you’d ask",
+        "opening_question": "If you met Elon Musk at a small meetup tonight, what is the first thing you would say to him and why?",
     },
     {
         "title": "If you were Prime Minister of India for one day",
         "category": "Imagination",
         "description": "Explain your top 2-3 decisions and why",
+        "opening_question": "If you were Prime Minister of India for one day, what is the very first decision you would make and why?",
     },
     {
         "title": "Your favourite book or movie that changed you",
         "category": "Favorites",
         "description": "Share the story and how it impacted your thinking",
+        "opening_question": "What is one book or movie that really changed how you think, and what exactly did it change for you?",
     },
     {
         "title": "Handling a really tough situation at work",
         "category": "Experience",
         "description": "Tell a real story with challenges and decisions",
+        "opening_question": "Think of a really tough situation you faced at work. What happened, and what was the hardest decision you had to make?",
     },
     {
         "title": "Explaining a complex topic in your field to a friend",
         "category": "Career",
         "description": "Practice simplifying something technical or advanced",
+        "opening_question": "Pick one complex idea from your field. How would you explain it in simple language to a friend who knows nothing about it?",
     },
 ]
 
 
 def _normalize_topic_item(item):
-    """Ensure item has title, category, description (strings)."""
+    """Ensure item has title, category, description, opening_question (strings)."""
     if isinstance(item, str):
-        return {"title": item.strip(), "category": "General", "description": "Practice your communication skills."}
+        title = item.strip()
+        return {
+            "title": title,
+            "category": "General",
+            "description": "Practice your communication skills.",
+            "opening_question": f"In your own words, what do you think about {title} in today’s world?",
+        }
     if not isinstance(item, dict):
         return None
     title = (item.get("title") or item.get("name") or "").strip()
@@ -348,7 +506,21 @@ def _normalize_topic_item(item):
     description = (item.get("description") or item.get("desc") or "Practice your communication skills.").strip()
     if len(description.split()) > 10:
         description = " ".join(description.split()[:8]) + ("..." if len(description.split()) > 8 else "")
-    return {"title": title, "category": category, "description": description}
+    opening_question = (
+        item.get("opening_question")
+        or item.get("openingQuestion")
+        or item.get("question")
+        or ""
+    )
+    opening_question = (opening_question or "").strip()
+    if not opening_question:
+        opening_question = f"In your own words, what do you think about {title} in today’s world?"
+    return {
+        "title": title,
+        "category": category,
+        "description": description,
+        "opening_question": opening_question,
+    }
 
 
 @api_view(["GET"])
@@ -394,6 +566,71 @@ def suggested_topics(request):
         return Response({"topics": DEFAULT_TOPICS_STRUCTURED})
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def daily_topic(request):
+    """
+    Get or generate today's daily practice topic for this user.
+    Exactly one topic per day per user (title + 1–2 sentence description).
+    """
+    import json
+    import re
+    from django.utils import timezone
+    from user_auth.models import UserProfile
+
+    today = timezone.now().date()
+
+    try:
+        profile = UserProfile.objects.get(user=request.user)
+    except UserProfile.DoesNotExist:
+        return Response(
+            {
+                "title": "Tell me about the best day of your life.",
+                "description": "Share what happened, who was there, and why it still feels special to you.",
+            }
+        )
+
+    # If we already have today's topic, reuse it.
+    if profile.daily_topic_title and profile.daily_topic_date == today:
+        return Response(
+            {
+                "title": profile.daily_topic_title,
+                "description": profile.daily_topic_description
+                or "Speak freely about this topic in your own words.",
+            }
+        )
+
+    # Otherwise, generate a fresh topic for today with the LLM.
+    try:
+        llm = get_llm()
+        response = llm.invoke(DAILY_TOPIC_PROMPT)
+        raw = response.content if hasattr(response, "content") else str(response)
+        raw = (raw or "").strip()
+        # Extract first JSON object from the response
+        obj_match = re.search(r"\{[\s\S]*\}", raw)
+        if obj_match:
+            data = json.loads(obj_match.group())
+        else:
+            data = {}
+    except Exception:
+        data = {}
+
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip()
+
+    if not title:
+        title = "Tell me about the best day of your life."
+    if not description:
+        description = "Share what happened, who was there, and why it still feels special to you."
+
+    profile.daily_topic_title = title
+    profile.daily_topic_description = description
+    profile.daily_topic_date = today
+    profile.save(update_fields=["daily_topic_title", "daily_topic_description", "daily_topic_date", "updated_at"])
+
+    return Response({"title": title, "description": description})
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @parser_classes([JSONParser, MultiPartParser, FormParser])
@@ -433,6 +670,7 @@ def voice_chat(request):
     except (TypeError, ValueError):
         spoken_duration = 0.0
     audio_file = request.FILES.get("audio")
+    solo_mode = request.data.get("solo") in (True, "true", "1", "solo", "yes")
 
     # Welcome: first message from AI when conversation has no messages yet
     if want_welcome and conversation_id and not text and not audio_file:
@@ -531,6 +769,21 @@ def voice_chat(request):
             pass
 
     try:
+        # In solo mode, we only record the user's speech for stats – no LLM, no TTS.
+        if conversation:
+            next_seq = conversation.messages.count()
+            ConversationMessage.objects.create(
+                conversation=conversation,
+                role=ConversationMessage.ROLE_USER,
+                content=text,
+                sequence=next_seq,
+                spoken_duration_seconds=spoken_duration if spoken_duration > 0 else None,
+            )
+
+        if solo_mode:
+            # Frontend ignores reply; this keeps the session one-way.
+            return Response({"text": ""})
+
         llm = get_llm()
         prompt_template = build_voice_prompt(topic, history)
         prompt = prompt_template.format(question=text)
