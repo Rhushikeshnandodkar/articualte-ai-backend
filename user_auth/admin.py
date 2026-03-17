@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 from django.utils.safestring import mark_safe
-from .models import Interest, SubscriptionPlan, Badge, UserProfile
+from .models import Interest, SubscriptionPlan, Badge, UserProfile, PaymentOrder
 
 
 @admin.register(Interest)
@@ -34,6 +34,14 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
 class BadgeAdmin(admin.ModelAdmin):
     list_display = ('name', 'score_threshold', 'created_at')
     search_fields = ('name',)
+
+
+@admin.register(PaymentOrder)
+class PaymentOrderAdmin(admin.ModelAdmin):
+    list_display = ('razorpay_order_id', 'user', 'plan', 'status', 'amount_paise', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('razorpay_order_id', 'razorpay_payment_id', 'user__username')
+    raw_id_fields = ('user', 'plan')
 
 
 @admin.register(UserProfile)

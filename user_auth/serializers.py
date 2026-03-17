@@ -56,6 +56,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     game_score = serializers.IntegerField(read_only=True)
     current_badge_icon = serializers.SerializerMethodField()
     badge_progress = serializers.SerializerMethodField()
+    subscription_active = serializers.SerializerMethodField()
 
     class Meta:
         model = UserProfile
@@ -63,6 +64,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'id', 'profession', 'goal', 'communication_level', 'bio', 'interests_text',
             'total_sessions', 'total_minutes_spoken', 'average_filler_words', 'average_pace_wpm',
             'confidence_score', 'clarity_score', 'subscription_plan',
+            'subscription_expiry', 'payment_status', 'subscription_active',
             'monthly_minutes_used', 'minutes_limit', 'minutes_remaining',
             'current_streak', 'longest_streak', 'total_practice_days',
             'created_at', 'updated_at',
@@ -79,24 +81,39 @@ class ProfileSerializer(serializers.ModelSerializer):
             'confidence_score',
             'clarity_score',
             'subscription_plan',
+            'subscription_expiry',
+            'payment_status',
             'monthly_minutes_used',
             'current_streak',
             'longest_streak',
             'total_practice_days',
         ]
 
+    def get_subscription_active(self, obj):
+        """True only if user has a paid plan that hasn't expired."""
+        from django.utils import timezone
+        plan = obj.subscription_plan
+        today = timezone.now().date()
+        if (
+            plan is not None
+            and obj.payment_status == 'paid'
+            and obj.subscription_expiry is not None
+            and obj.subscription_expiry >= today
+        ):
+            return True
+        return plan is not None and (obj.payment_status != 'paid' and float(plan.price) == 0)
+
     def get_minutes_limit(self, obj):
         from django.utils import timezone
         plan = obj.subscription_plan
         today = timezone.now().date()
-        # Treat plan as active only if paid and not expired
         if (
             plan is not None
             and obj.payment_status == 'paid'
-            and (obj.subscription_expiry is None or obj.subscription_expiry >= today)
+            and obj.subscription_expiry is not None
+            and obj.subscription_expiry >= today
         ):
             return plan.limit_minutes
-        # Otherwise user is effectively on free plan
         return 10
 
     def get_minutes_remaining(self, obj):

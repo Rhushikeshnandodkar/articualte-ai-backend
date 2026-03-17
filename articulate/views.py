@@ -161,15 +161,64 @@ def conversation_list(request):
 @parser_classes([JSONParser])
 def conversation_create(request):
     """Create a new conversation with a topic. User can type topic or select later."""
+    from user_auth.views import check_and_expire_subscription
+
+    try:
+        profile = UserProfile.objects.get(user=request.user)
+    except UserProfile.DoesNotExist:
+        profile = None
+
+    plan_tier = "free"
+    if profile is not None:
+        check_and_expire_subscription(profile)
+        profile.refresh_from_db()
+        plan_tier = _get_active_plan_tier(profile)
+        if plan_tier == "free":
+            minutes_limit = 10
+        else:
+            minutes_limit = profile.subscription_plan.limit_minutes
+        today = timezone.now().date()
+        reset_date = profile.monthly_minutes_reset_at
+        if reset_date is None or reset_date.year != today.year or reset_date.month != today.month:
+            profile.monthly_minutes_used = 0
+            profile.monthly_minutes_reset_at = today
+            profile.save(update_fields=["monthly_minutes_used", "monthly_minutes_reset_at"])
+        used = profile.monthly_minutes_used or 0
+        if used >= minutes_limit:
+            return Response(
+                {
+                    "error": "You have used all your practice minutes for this month. "
+                    + "Upgrade your plan to continue practicing.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
     ser = CreateConversationSerializer(data=request.data)
     if not ser.is_valid():
         return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
     topic = ser.validated_data["topic"].strip()
+    topic_id = ser.validated_data.get("topic_id")
+
     if not topic:
         return Response(
             {"error": "Topic cannot be empty."},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    if topic_id is not None and profile is not None and plan_tier == "free":
+        allowed_ids = list(
+            Topic.objects.filter(is_active=True)
+            .order_by("category", "level", "title")
+            .values_list("id", flat=True)[:5]
+        )
+        if topic_id not in allowed_ids:
+            return Response(
+                {
+                    "error": "Free plan includes only the first 5 table topics. Upgrade to access all topics.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
     conv = Conversation.objects.create(user=request.user, topic=topic)
     return Response({
         "id": conv.id,
@@ -284,21 +333,21 @@ def _compute_table_topic_score(conv: Conversation) -> int:
 def _get_active_plan_tier(profile: UserProfile) -> str:
     """
     Return 'free', 'builder', or 'performer' based on active subscription.
-    A plan is active only if payment_status == 'paid' and not expired.
+    A plan is active only if payment_status == 'paid', expiry is set, and not expired.
     """
     today = timezone.now().date()
     plan = profile.subscription_plan
     if (
         plan is not None
         and profile.payment_status == 'paid'
-        and (profile.subscription_expiry is None or profile.subscription_expiry >= today)
+        and profile.subscription_expiry is not None
+        and profile.subscription_expiry >= today
     ):
         name = (plan.name or "").lower()
         if "builder" in name:
             return "builder"
         if "perform" in name:
             return "performer"
-        # Default paid tier behaves like performer (full features)
         return "performer"
     return "free"
 
@@ -635,24 +684,39 @@ def daily_topic(request):
 @permission_classes([IsAuthenticated])
 @parser_classes([JSONParser, MultiPartParser, FormParser])
 def voice_chat(request):
-    # Enforce monthly minutes limit before processing voice interaction
+    from user_auth.views import check_and_expire_subscription
+
     try:
         profile = UserProfile.objects.get(user=request.user)
     except UserProfile.DoesNotExist:
         profile = None
+
     plan_tier = "free"
     if profile is not None:
+        check_and_expire_subscription(profile)
+        profile.refresh_from_db()
+
         plan_tier = _get_active_plan_tier(profile)
-        # Minutes limit: free = 10, paid = plan.limit_minutes
+
         if plan_tier == "free":
             minutes_limit = 10
         else:
             minutes_limit = profile.subscription_plan.limit_minutes
+
+        today = timezone.now().date()
+        reset_date = profile.monthly_minutes_reset_at
+        if reset_date is None or reset_date.year != today.year or reset_date.month != today.month:
+            profile.monthly_minutes_used = 0
+            profile.monthly_minutes_reset_at = today
+            profile.save(update_fields=["monthly_minutes_used", "monthly_minutes_reset_at"])
+
         used = profile.monthly_minutes_used or 0
         if used >= minutes_limit:
             return Response(
                 {
-                    "error": "You have used all your practice minutes for this month. Please subscribe or wait for your minutes to reset."
+                    "error": "You have used all your practice minutes for this month. "
+                    + ("Upgrade your plan for more minutes." if plan_tier == "free"
+                       else "Your monthly limit has been reached. Please renew or wait for the next billing cycle.")
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
@@ -769,7 +833,6 @@ def voice_chat(request):
             pass
 
     try:
-        # In solo mode, we only record the user's speech for stats – no LLM, no TTS.
         if conversation:
             next_seq = conversation.messages.count()
             ConversationMessage.objects.create(
@@ -781,7 +844,6 @@ def voice_chat(request):
             )
 
         if solo_mode:
-            # Frontend ignores reply; this keeps the session one-way.
             return Response({"text": ""})
 
         llm = get_llm()
@@ -791,22 +853,14 @@ def voice_chat(request):
         response_text = response.content if hasattr(response, "content") else str(response)
         if not response_text:
             response_text = "I didn't catch that. Could you say it again?"
-        print(f"[Voice] AI response: {response_text!r}")
 
         if conversation:
             next_seq = conversation.messages.count()
             ConversationMessage.objects.create(
                 conversation=conversation,
-                role=ConversationMessage.ROLE_USER,
-                content=text,
-                sequence=next_seq,
-                spoken_duration_seconds=spoken_duration if spoken_duration > 0 else None,
-            )
-            ConversationMessage.objects.create(
-                conversation=conversation,
                 role=ConversationMessage.ROLE_ASSISTANT,
                 content=response_text,
-                sequence=next_seq + 1,
+                sequence=next_seq,
             )
 
         # Builder plan: STT allowed, but NO TTS (text-only reply).

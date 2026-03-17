@@ -13,6 +13,29 @@ class SubscriptionPlan(models.Model):
     duration = models.IntegerField(default=30)
     limit_minutes = models.IntegerField(default=300, help_text="Monthly practice minutes included")
 
+
+class PaymentOrder(models.Model):
+    """Tracks Razorpay orders for subscription payments."""
+    STATUS_CHOICES = [
+        ('created', 'Created'),
+        ('paid', 'Paid'),
+        ('failed', 'Failed'),
+        ('expired', 'Expired'),
+    ]
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    plan = models.ForeignKey(SubscriptionPlan, on_delete=models.CASCADE)
+    razorpay_order_id = models.CharField(max_length=100, unique=True)
+    razorpay_payment_id = models.CharField(max_length=100, null=True, blank=True)
+    amount_paise = models.IntegerField(help_text="Amount in paise (INR)")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='created')
+    created_at = models.DateTimeField(auto_now_add=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Payment Order'
+        verbose_name_plural = 'Payment Orders'
+
 class Badge(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)

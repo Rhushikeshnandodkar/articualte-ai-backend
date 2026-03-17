@@ -9,6 +9,8 @@ from .views import (
     resend_email_otp,
     list_subscription_plans,
     subscribe,
+    create_order,
+    verify_payment,
 )
 
 urlpatterns = [
@@ -21,4 +23,6 @@ urlpatterns = [
     path('resend-email-otp/', resend_email_otp, name='resend_email_otp'),
     path('plans/', list_subscription_plans, name='subscription_plans'),
     path('subscription/subscribe/', subscribe, name='subscribe'),
+    path('subscription/create-order/', create_order, name='create_order'),
+    path('subscription/verify-payment/', verify_payment, name='verify_payment'),
 ]
