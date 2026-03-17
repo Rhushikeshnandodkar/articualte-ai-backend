@@ -7,6 +7,7 @@ charset-normalizer==3.4.5
 click==8.1.8
 cryptography==46.0.5
 distro==1.9.0
+dj-database-url==3.1.2
 Django==4.2.29
 django-cors-headers==4.9.0
 djangorestframework==3.16.1
@@ -14,6 +15,7 @@ djangorestframework_simplejwt==5.5.1
 elevenlabs==2.39.0
 groq==0.37.1
 gTTS==2.5.4
+gunicorn==25.1.0
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
@@ -43,5 +45,6 @@ typing_extensions==4.15.0
 urllib3==2.6.3
 uuid_utils==0.14.1
 websockets==16.0
+whitenoise==6.12.0
 xxhash==3.6.0
 zstandard==0.25.0
