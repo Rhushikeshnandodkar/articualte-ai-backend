@@ -27,6 +27,7 @@ langchain-groq==1.1.2
 langsmith==0.7.17
 orjson==3.11.7
 packaging==26.0
+psycopg2-binary==2.9.11
 pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5
