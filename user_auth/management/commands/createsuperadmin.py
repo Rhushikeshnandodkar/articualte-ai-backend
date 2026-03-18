@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = 'Create a default superuser if one does not already exist'
+    help = 'Create or update the default superuser'
 
     def handle(self, *args, **kwargs):
         User = get_user_model()
@@ -12,8 +12,17 @@ class Command(BaseCommand):
         email = os.getenv('ADMIN_EMAIL', 'admin@example.com')
         password = os.getenv('ADMIN_PASSWORD', 'admin123')
 
-        if not User.objects.filter(username=username).exists():
-            User.objects.create_superuser(username=username, email=email, password=password)
+        user, created = User.objects.get_or_create(
+            username=username,
+            defaults={'email': email, 'is_staff': True, 'is_superuser': True},
+        )
+        user.set_password(password)
+        user.email = email
+        user.is_staff = True
+        user.is_superuser = True
+        user.save()
+
+        if created:
             self.stdout.write(self.style.SUCCESS(f'Superuser "{username}" created.'))
         else:
-            self.stdout.write(f'Superuser "{username}" already exists.')
+            self.stdout.write(self.style.SUCCESS(f'Superuser "{username}" password updated.'))
