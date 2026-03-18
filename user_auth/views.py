@@ -120,6 +120,26 @@ class RegisterView(generics.CreateAPIView):
 class CustomTokenObtainPairView(TokenObtainPairView):
     permission_classes = [AllowAny]
 
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            username = request.data.get("username", "")
+            try:
+                user = User.objects.get(username=username)
+                profile = UserProfile.objects.filter(user=user).first()
+                if profile and not profile.email_verified:
+                    return Response(
+                        {
+                            "error": "email_not_verified",
+                            "email": user.email,
+                            "detail": "Please verify your email before logging in.",
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+            except User.DoesNotExist:
+                pass
+        return response
+
 
 class CurrentUserView(generics.RetrieveAPIView):
     serializer_class = UserSerializer
