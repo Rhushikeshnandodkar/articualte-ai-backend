@@ -101,40 +101,77 @@ ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128"
 ELEVENLABS_STT_MODEL = "scribe_v2"
 
 
-def speech_to_text_elevenlabs(audio_file) -> str:
-    """Transcribe audio with ElevenLabs STT (keeps filler words; no_verbatim=False)."""
-    client = get_elevenlabs_client()
+# def speech_to_text_elevenlabs(audio_file) -> str:
+#     """Transcribe audio with ElevenLabs STT (keeps filler words; no_verbatim=False)."""
+#     client = get_elevenlabs_client()
+#     if hasattr(audio_file, "read"):
+#         audio_file.seek(0)
+#         file_content = audio_file.read()
+#     else:
+#         file_content = audio_file
+#     result = client.speech_to_text.convert(
+#         file=("audio.webm", file_content, "audio/webm"),
+#         model_id=ELEVENLABS_STT_MODEL,
+#         no_verbatim=False,
+#     )
+#     if hasattr(result, "text"):
+#         return (result.text or "").strip()
+#     if hasattr(result, "transcripts") and result.transcripts:
+#         return " ".join((t.text or "").strip() for t in result.transcripts).strip()
+#     return ""
+
+
+def speech_to_text_groq(audio_file) -> str:
+    """Transcribe audio with Groq Whisper (whisper-large-v3)."""
+    from groq import Groq as GroqClient
+
+    api_key = _get_env("GROQ_API_KEY")
+    client = GroqClient(api_key=api_key)
+
     if hasattr(audio_file, "read"):
         audio_file.seek(0)
         file_content = audio_file.read()
     else:
         file_content = audio_file
-    result = client.speech_to_text.convert(
-        file=("audio.webm", file_content, "audio/webm"),
-        model_id=ELEVENLABS_STT_MODEL,
-        no_verbatim=False,
+
+    transcription = client.audio.transcriptions.create(
+        file=("audio.webm", file_content),
+        model="whisper-large-v3",
+        language="en",
+        temperature=0.0,
     )
-    if hasattr(result, "text"):
-        return (result.text or "").strip()
-    if hasattr(result, "transcripts") and result.transcripts:
-        return " ".join((t.text or "").strip() for t in result.transcripts).strip()
-    return ""
+    return (transcription.text or "").strip()
 
 
-def text_to_speech_elevenlabs(text: str) -> bytes:
-    """Convert text to MP3 bytes using ElevenLabs."""
-    client = get_elevenlabs_client()
-    result = client.text_to_speech.convert(
-        text=text,
-        voice_id=ELEVENLABS_VOICE_ID,
-        model_id=ELEVENLABS_MODEL_ID,
-        output_format=ELEVENLABS_OUTPUT_FORMAT,
+# def text_to_speech_elevenlabs(text: str) -> bytes:
+#     """Convert text to MP3 bytes using ElevenLabs."""
+#     client = get_elevenlabs_client()
+#     result = client.text_to_speech.convert(
+#         text=text,
+#         voice_id=ELEVENLABS_VOICE_ID,
+#         model_id=ELEVENLABS_MODEL_ID,
+#         output_format=ELEVENLABS_OUTPUT_FORMAT,
+#     )
+#     buffer = BytesIO()
+#     for chunk in result:
+#         buffer.write(chunk)
+#     buffer.seek(0)
+#     return buffer.getvalue()
+
+
+def text_to_speech_groq(text: str) -> bytes:
+    """Convert text to WAV bytes using Groq Orpheus TTS."""
+    from groq import Groq
+
+    api_key = _get_env("GROQ_API_KEY")
+    client = Groq(api_key=api_key)
+    response = client.audio.speech.create(
+        model="canopylabs/orpheus-v1-english",
+        voice="troy",
+        input=text,
+        response_format="wav",
     )
-    buffer = BytesIO()
-    for chunk in result:
-        buffer.write(chunk)
-    buffer.seek(0)
-    return buffer.getvalue()
+    return response.parse()
 
 
 
@@ -770,8 +807,8 @@ def voice_chat(request):
             # For builder plan, do NOT use ElevenLabs TTS – return text only.
             if plan_tier == "builder":
                 return Response({"text": welcome_text})
-            audio_bytes = text_to_speech_elevenlabs(welcome_text)
-            resp = HttpResponse(audio_bytes, content_type="audio/mpeg")
+            audio_bytes = text_to_speech_groq(welcome_text)
+            resp = HttpResponse(audio_bytes, content_type="audio/wav")
             resp["Content-Length"] = len(audio_bytes)
             resp["X-AI-Response-Text"] = base64.b64encode(welcome_text.encode("utf-8")).decode("ascii")
             resp["Cache-Control"] = "no-cache"
@@ -788,8 +825,8 @@ def voice_chat(request):
             if plan_tier == "builder":
                 return Response({"text": fallback})
             try:
-                audio_bytes = text_to_speech_elevenlabs(fallback)
-                resp = HttpResponse(audio_bytes, content_type="audio/mpeg")
+                audio_bytes = text_to_speech_groq(fallback)
+                resp = HttpResponse(audio_bytes, content_type="audio/wav")
                 resp["Content-Length"] = len(audio_bytes)
                 resp["X-AI-Response-Text"] = base64.b64encode(fallback.encode("utf-8")).decode("ascii")
                 resp["Cache-Control"] = "no-cache"
@@ -799,8 +836,8 @@ def voice_chat(request):
 
     if audio_file:
         try:
-            text = speech_to_text_elevenlabs(audio_file)
-            print(f"[Voice] Transcribed (ElevenLabs STT): {text!r}")
+            text = speech_to_text_groq(audio_file)
+            print(f"[Voice] Transcribed (Groq Whisper): {text!r}")
         except Exception as e:
             print(f"[Voice] STT error: {e}")
             return Response(
@@ -867,9 +904,9 @@ def voice_chat(request):
         if plan_tier == "builder":
             return Response({"text": response_text})
 
-        audio_bytes = text_to_speech_elevenlabs(response_text)
-        print(f"[Voice] ElevenLabs audio size: {len(audio_bytes)} bytes")
-        resp = HttpResponse(audio_bytes, content_type="audio/mpeg")
+        audio_bytes = text_to_speech_groq(response_text)
+        print(f"[Voice] Groq TTS audio size: {len(audio_bytes)} bytes")
+        resp = HttpResponse(audio_bytes, content_type="audio/wav")
         resp["Content-Length"] = len(audio_bytes)
         resp["X-AI-Response-Text"] = base64.b64encode(response_text.encode("utf-8")).decode("ascii")
         resp["Cache-Control"] = "no-cache"
