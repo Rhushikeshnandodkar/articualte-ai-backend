@@ -508,7 +508,11 @@ SUGGESTED_TOPICS_PROMPT = """You are a sharp, modern communication coach helping
 
 You must suggest topics that feel **exciting, specific, and emotionally engaging** – things the user would genuinely *want* to talk about, not school-style or textbook topics.
 
-Based on the user's profile below (profession, goal, communication level, interests, and bio), suggest exactly 3 to 5 SPECIFIC, high‑engagement conversation practice topics that would feel natural and interesting for this person.
+Topics can be vivid scenario titles OR open-ended questions – both work great. Open-ended questions (e.g. "What's the most difficult decision you've ever made at work?") often feel more natural to answer.
+
+Based on the user's profile below, suggest exactly 3 to 5 SPECIFIC, high‑engagement conversation practice topics that would feel natural and interesting for this person.
+
+{previous_topics_section}
 
 Strong topics usually:
 - are realistic situations they might actually face in their work or real life
@@ -517,11 +521,13 @@ Strong topics usually:
 - connect directly to their interests or goals (so they *crave* talking about them)
 - include vivid *imagination* scenarios (e.g. “Imagine you are the Prime Minister of India for one day”, “You suddenly meet Elon Musk at a small meetup”)
 - include personal favourites or memorable experiences (e.g. “Your favourite book that changed your thinking”, “The most challenging case you handled as a doctor”)
+- can be phrased as open-ended questions that spark real conversation (e.g. "What would you do if you had to fire a friend?", "Describe a time you had to deliver news someone wouldn't want to hear")
 
 Avoid:
 - generic school topics like “environment”, “technology”, “hobbies”, “travel” without a concrete, personal scenario
 - bland titles like “Daily routine” or “My city”
 - yes/no questions or topics that can be answered in one sentence
+- repeating or closely mimicking any topic from the "Previously shown" list above
 
 Return ONLY a valid JSON array of objects. Each object must have exactly:
 - "title": string (short, vivid topic name, e.g. "Imagine you meet Elon Musk at a meetup", "If you were Prime Minister of India for a day")
@@ -536,7 +542,7 @@ User profile:
 - Interests: {interests}
 - Bio: {bio}
 
-Return only the JSON array of 3-5 objects with title, category, and description:"""
+Return only the JSON array of 3-5 objects with title, category, description, and opening_question:"""
 
 
 DEFAULT_TOPICS_STRUCTURED = [
@@ -624,12 +630,26 @@ def suggested_topics(request):
     communication_level = profile.communication_level or "beginner"
     interests = (profile.interests_text or "").strip() or "Not specified"
     bio = (profile.bio or "").strip() or "Not specified"
+
+    # Parse previously shown topic titles (pipe-separated) so we don't repeat them on refresh
+    previous_titles_raw = request.GET.get("previous_titles", "")
+    previous_titles = [t.strip() for t in previous_titles_raw.split("|") if t.strip()]
+    if previous_titles:
+        previous_topics_section = (
+            "PREVIOUSLY SHOWN TOPICS (do NOT repeat these – suggest completely NEW and different topics):\n"
+            + "\n".join(f"- {t}" for t in previous_titles)
+            + "\n\n"
+        )
+    else:
+        previous_topics_section = ""
+
     prompt = SUGGESTED_TOPICS_PROMPT.format(
         profession=profession,
         goal=goal,
         communication_level=communication_level,
         interests=interests,
         bio=bio,
+        previous_topics_section=previous_topics_section,
     )
     try:
         llm = get_llm()
