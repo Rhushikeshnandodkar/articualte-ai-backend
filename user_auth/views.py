@@ -300,7 +300,7 @@ def resend_email_otp(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([AllowAny])
 def list_subscription_plans(request):
     """Return all subscription plans so frontend can show options."""
     plans = SubscriptionPlan.objects.all().order_by('price')
