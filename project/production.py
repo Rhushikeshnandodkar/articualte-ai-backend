@@ -8,6 +8,13 @@ DATABASES = {
     'default': dj_database_url.config(default=os.getenv('DATABASE_URL'))
 }
 
+# Resend for email (Render blocks SMTP). Set RESEND_API_KEY in env.
+# Get key at https://resend.com/api-keys | Use onboarding@resend.dev for testing
+_resend_key = os.getenv("RESEND_API_KEY", "").strip()
+if _resend_key:
+    RESEND_API_KEY = _resend_key
+    RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev").strip() or "onboarding@resend.dev"
+
 # Production CORS: use explicit origins to avoid "CORS Missing Allow Origin" with credentials.
 # Set CORS_ALLOWED_ORIGINS (comma-separated) or FRONTEND_URL in env.
 # Example: CORS_ALLOWED_ORIGINS=https://app.example.com  OR  FRONTEND_URL=https://app.example.com

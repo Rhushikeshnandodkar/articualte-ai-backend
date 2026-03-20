@@ -10,6 +10,33 @@ from django.utils.crypto import get_random_string
 from django.core.mail import send_mail
 from django.conf import settings
 from .models import UserProfile, SubscriptionPlan, PaymentOrder
+
+
+def _send_email(subject, message, to_emails, from_email=None):
+    """Send email via Resend (production) or SMTP. Never raises - logs on failure."""
+    import logging
+    logger = logging.getLogger(__name__)
+    from_email = from_email or getattr(settings, "DEFAULT_FROM_EMAIL", None) or "onboarding@resend.dev"
+    resend_key = getattr(settings, "RESEND_API_KEY", None) or ""
+    if resend_key:
+        try:
+            import resend
+            resend.api_key = resend_key
+            resend_from = getattr(settings, "RESEND_FROM_EMAIL", "onboarding@resend.dev")
+            resend.Emails.send({
+                "from": resend_from,
+                "to": to_emails,
+                "subject": subject,
+                "text": message,
+            })
+            return
+        except Exception as e:
+            logger.exception("Email (Resend) failed: %s", e)
+            return
+    try:
+        send_mail(subject, message, from_email, to_emails, fail_silently=True)
+    except Exception as e:
+        logger.exception("Email (SMTP) failed: %s", e)
 from .serializers import RegisterSerializer, UserSerializer, ProfileSerializer
 from articulate.utils_streaks import compute_and_update_profile_streaks
 
@@ -126,11 +153,7 @@ class RegisterView(generics.CreateAPIView):
                 f"This code will expire in 10 minutes.\n\n"
                 f"If you did not request this, you can ignore this email."
             )
-            from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@articulate.ai") or "no-reply@articulate.ai"
-            try:
-                send_mail(subject, message, from_email, [user.email], fail_silently=False)
-            except Exception as e:
-                logger.exception("Register: email send failed: %s", e)
+            _send_email(subject, message, [user.email])
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -271,11 +294,7 @@ def resend_email_otp(request):
             f"Here is your new one-time verification code for articulate.ai: {otp}\n\n"
             f"This code will expire in 10 minutes."
         )
-        from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@articulate.ai")
-        try:
-            send_mail(subject, message, from_email, [user.email], fail_silently=False)
-        except Exception:
-            return Response({"error": "Failed to send email. Please try again."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        _send_email(subject, message, [user.email])
 
     return Response({"message": "A new code has been sent to your email."}, status=status.HTTP_200_OK)
 
