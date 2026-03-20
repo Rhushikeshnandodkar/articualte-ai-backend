@@ -1,3 +1,4 @@
+from django.db import IntegrityError
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -92,15 +93,30 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [AllowAny]
     serializer_class = RegisterSerializer
 
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except IntegrityError as e:
+            return Response(
+                {"username": ["A user with this username or email already exists."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
     def perform_create(self, serializer):
         """Create user, generate OTP, send verification email."""
+        import logging
+        logger = logging.getLogger(__name__)
         user = serializer.save()
-        profile, _ = UserProfile.objects.get_or_create(user=user)
-        otp = get_random_string(length=6, allowed_chars='0123456789')
-        profile.email_verified = False
-        profile.email_otp = otp
-        profile.email_otp_expires_at = timezone.now() + timezone.timedelta(minutes=10)
-        profile.save(update_fields=["email_verified", "email_otp", "email_otp_expires_at"])
+        try:
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            otp = get_random_string(length=6, allowed_chars='0123456789')
+            profile.email_verified = False
+            profile.email_otp = otp
+            profile.email_otp_expires_at = timezone.now() + timezone.timedelta(minutes=10)
+            profile.save(update_fields=["email_verified", "email_otp", "email_otp_expires_at"])
+        except Exception as e:
+            logger.exception("Register: profile create/save failed: %s", e)
+            raise
 
         if user.email:
             subject = "articulate.ai – Verify your email"
@@ -110,11 +126,11 @@ class RegisterView(generics.CreateAPIView):
                 f"This code will expire in 10 minutes.\n\n"
                 f"If you did not request this, you can ignore this email."
             )
-            from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@articulate.ai")
+            from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@articulate.ai") or "no-reply@articulate.ai"
             try:
                 send_mail(subject, message, from_email, [user.email], fail_silently=False)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.exception("Register: email send failed: %s", e)
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
