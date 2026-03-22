@@ -68,17 +68,18 @@ def build_voice_prompt(topic: str, conversation_history: list) -> str:
     return f"""You are a helpful, friendly coach helping the user practice their communication skills.
 Today's topic is strictly: {topic}.
 
-Always keep the conversation focused on this topic. Your follow-up question MUST be clearly about this topic (you can go deeper, ask for examples, stories, opinions, role-plays), but do not switch to unrelated themes.
+Your job: reply with ONE engaging follow-up question only. No extra lines, no preamble, no reaction, no "That's interesting" or filler. Just a single open-ended question.
 
-Reply in exactly two short lines only:
-1) one line of thought or brief reaction to what they said, and
-2) one open-ended question to keep the conversation going about this topic.
-
-No long explanations, no lists, no extra sentences. Be natural and conversational. Keep each line concise so it's quick to listen to.
+Rules:
+- Output ONLY one question. Nothing else.
+- The question MUST connect to both the topic ({topic}) and what the user just said.
+- Make it engaging: invite stories, examples, opinions, deeper reflection, or role-play.
+- Be natural and conversational. Short so it's quick to listen to.
+- No bullet points, no lists, no introductions.
 
 {history_text}User said: {{question}}
 
-Your reply (exactly 1 line thought + 1 line open-ended question about this topic):"""
+Your reply (one question only, nothing else):"""
 
 
 WELCOME_PROMPT = """You are a friendly communication coach. The user is about to start a practice conversation. Generate a short welcome and intro that:
@@ -910,6 +911,15 @@ def voice_chat(request):
         response_text = response.content if hasattr(response, "content") else str(response)
         if not response_text:
             response_text = "I didn't catch that. Could you say it again?"
+        else:
+            response_text = response_text.strip()
+            # Keep only the question: if multiple lines, take the one that ends with ?
+            lines = [ln.strip() for ln in response_text.split("\n") if ln.strip()]
+            questions = [ln for ln in lines if ln.endswith("?")]
+            if questions:
+                response_text = questions[-1]
+            elif lines:
+                response_text = lines[-1]
 
         if conversation:
             next_seq = conversation.messages.count()
