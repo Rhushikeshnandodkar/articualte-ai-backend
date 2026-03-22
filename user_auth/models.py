@@ -1,6 +1,12 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+
+
+def _empty_json_list():
+    return []
+
+
 # Create your models here.
 class Interest(models.Model):
     name = models.CharField(max_length=255)
@@ -104,6 +110,15 @@ class UserProfile(models.Model):
     daily_topic_title = models.CharField(max_length=255, null=True, blank=True)
     daily_topic_description = models.TextField(null=True, blank=True)
     daily_topic_date = models.DateField(null=True, blank=True, help_text="Date when daily topic was generated")
+    daily_topic_completed_today = models.BooleanField(
+        default=False,
+        help_text="True after user ends a session whose topic matched today's daily topic; allows a fresh daily topic the same day.",
+    )
+    daily_topic_past_titles = models.JSONField(
+        default=_empty_json_list,
+        blank=True,
+        help_text="Recent daily topic titles so the LLM avoids repeats.",
+    )
     # Gamified score & badge for table topics
     game_score = models.IntegerField(default=0, help_text="Gamified score from completed table topics")
     badge_level = models.CharField(
@@ -115,7 +130,7 @@ class UserProfile(models.Model):
             ("gold", "Gold"),
             ("diamond", "Diamond"),
         ],
-        default="none",
+        default="bronze",
     )
 
     class Meta:

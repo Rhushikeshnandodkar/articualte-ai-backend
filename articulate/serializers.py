@@ -90,6 +90,7 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "topic",
+            "topic_description",
             "status",
             "started_at",
             "ended_at",
@@ -107,3 +108,6 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
 class CreateConversationSerializer(serializers.Serializer):
     topic = serializers.CharField(max_length=500, allow_blank=False)
     topic_id = serializers.IntegerField(required=False, allow_null=True)
+    topic_description = serializers.CharField(
+        max_length=2000, required=False, allow_blank=True
+    )

@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.conf import settings
 
-from user_auth.models import UserProfile
+from user_auth.models import Badge, UserProfile
 
 from .models import Conversation, ConversationMessage, Topic
 from .serializers import (
@@ -82,16 +82,19 @@ Rules:
 Your reply (one question only, nothing else):"""
 
 
-WELCOME_PROMPT = """You are a friendly communication coach. The user is about to start a practice conversation. Generate a short welcome and intro that:
-1. Welcomes them and states today's topic clearly.
-2. Gives a 2-3 sentence thought or context about the topic to set the scene and spark discussion.
-3. Invites them to share when they're ready (e.g. "When you're ready, tell me your thoughts" or "Go ahead and start whenever you like").
+WELCOME_PROMPT = """You are a sharp communication coach. The user just opened a practice session. They have not spoken yet — YOU speak first.
 
-Keep it conversational and suitable for being read aloud. No bullet points. Total length: 3-5 sentences.
+Write ONE plain-text opening only. Rules:
+- Do NOT use hi, hello, hey, welcome, good morning, or any greeting.
+- Start directly with a vivid question or prompt that hooks the topic (like: "What are your views on current geopolitics—feel free to talk about whatever matters most to you." or "What do you think is the best thing about Indian people, and why?").
+- Make it feel personal and opinion-based so they want to talk at length. Invite stories, reasons, or examples.
+- Weave the topic title (and context if provided) naturally; do not read the title like a robot.
+- About 10 seconds read aloud: max 2 sentences, under 40 words total.
+- No bullet points, no labels, no "today we will".
 
-Topic: {topic}
-
-Your welcome (plain text only):"""
+Topic title: {topic}
+{context_block}
+Your opening (plain text only):"""
 
 
 ELEVENLABS_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
@@ -257,7 +260,12 @@ def conversation_create(request):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-    conv = Conversation.objects.create(user=request.user, topic=topic)
+    topic_description = (ser.validated_data.get("topic_description") or "").strip()
+    conv = Conversation.objects.create(
+        user=request.user,
+        topic=topic,
+        topic_description=topic_description,
+    )
     return Response({
         "id": conv.id,
         "topic": conv.topic,
@@ -390,10 +398,23 @@ def _get_active_plan_tier(profile: UserProfile) -> str:
     return "free"
 
 
-DAILY_TOPIC_PROMPT = """You are a creative, modern communication coach.
+def _daily_topic_prompt_with_history(past_titles: list) -> str:
+    past_titles = [t for t in (past_titles or []) if isinstance(t, str) and t.strip()]
+    past_titles = past_titles[-20:]
+    if past_titles:
+        listed = "\n".join(f"- {t}" for t in past_titles)
+        avoid = f"""
+The user has already received these daily topics before (including earlier today). You MUST propose something clearly different — new angle, setting, or theme. Do not repeat, rephrase, or closely mimic any line below:
+
+{listed}
+"""
+    else:
+        avoid = ""
+
+    return f"""You are a creative, modern communication coach.
 
 Generate ONE engaging, open-ended daily speaking topic for an adult learner.
-
+{avoid}
 The topic should:
 - be concrete and make the user immediately want to speak
 - feel like a real situation, thought, or feeling (not academic)
@@ -449,8 +470,6 @@ def conversation_end(request, pk):
                 progress.save(update_fields=["best_score", "last_score", "attempts", "last_completed_at"])
 
             # Recompute overall game_score and badge for this user based on all topics.
-            from user_auth.models import UserProfile, Badge
-
             try:
                 profile = UserProfile.objects.get(user=conv.user)
             except UserProfile.DoesNotExist:
@@ -500,6 +519,21 @@ def conversation_end(request, pk):
     except Exception:
         # Gamification should never break core stats; swallow errors.
         pass
+
+    try:
+        profile = UserProfile.objects.get(user=conv.user)
+        today = timezone.now().date()
+        dt_title = (profile.daily_topic_title or "").strip()
+        if (
+            profile.daily_topic_date == today
+            and dt_title
+            and conv.topic.strip() == dt_title
+        ):
+            profile.daily_topic_completed_today = True
+            profile.save(update_fields=["daily_topic_completed_today", "updated_at"])
+    except UserProfile.DoesNotExist:
+        pass
+
     return Response(ConversationDetailSerializer(conv).data)
 
 
@@ -678,7 +712,8 @@ def suggested_topics(request):
 def daily_topic(request):
     """
     Get or generate today's daily practice topic for this user.
-    Exactly one topic per day per user (title + 1–2 sentence description).
+    Reuses the same topic until they finish a session on it; then a new topic is generated the same day.
+    Past titles are passed to the LLM so topics do not repeat endlessly.
     """
     import json
     import re
@@ -697,8 +732,16 @@ def daily_topic(request):
             }
         )
 
-    # If we already have today's topic, reuse it.
-    if profile.daily_topic_title and profile.daily_topic_date == today:
+    # New calendar day: allow a fresh daily topic flow.
+    if profile.daily_topic_date != today:
+        profile.daily_topic_completed_today = False
+
+    # Same topic all day until they complete a session on that exact title.
+    if (
+        profile.daily_topic_title
+        and profile.daily_topic_date == today
+        and not profile.daily_topic_completed_today
+    ):
         return Response(
             {
                 "title": profile.daily_topic_title,
@@ -707,13 +750,18 @@ def daily_topic(request):
             }
         )
 
-    # Otherwise, generate a fresh topic for today with the LLM.
+    # Generate a new topic (first load of the day, or user finished today's topic and needs another).
+    past_raw = profile.daily_topic_past_titles
+    if not isinstance(past_raw, list):
+        past_raw = []
+    past_titles = [str(t).strip() for t in past_raw if str(t).strip()]
+
+    prompt = _daily_topic_prompt_with_history(past_titles)
     try:
         llm = get_llm()
-        response = llm.invoke(DAILY_TOPIC_PROMPT)
+        response = llm.invoke(prompt)
         raw = response.content if hasattr(response, "content") else str(response)
         raw = (raw or "").strip()
-        # Extract first JSON object from the response
         obj_match = re.search(r"\{[\s\S]*\}", raw)
         if obj_match:
             data = json.loads(obj_match.group())
@@ -730,10 +778,22 @@ def daily_topic(request):
     if not description:
         description = "Share what happened, who was there, and why it still feels special to you."
 
+    past_titles.append(title)
+    profile.daily_topic_past_titles = past_titles[-25:]
     profile.daily_topic_title = title
     profile.daily_topic_description = description
     profile.daily_topic_date = today
-    profile.save(update_fields=["daily_topic_title", "daily_topic_description", "daily_topic_date", "updated_at"])
+    profile.daily_topic_completed_today = False
+    profile.save(
+        update_fields=[
+            "daily_topic_past_titles",
+            "daily_topic_title",
+            "daily_topic_description",
+            "daily_topic_date",
+            "daily_topic_completed_today",
+            "updated_at",
+        ]
+    )
 
     return Response({"title": title, "description": description})
 
@@ -811,12 +871,14 @@ def voice_chat(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         topic = conversation.topic or "general conversation"
+        desc = (conversation.topic_description or "").strip()
+        context_block = f"Context for this session:\n{desc}\n" if desc else ""
         try:
             llm = get_llm()
-            prompt = WELCOME_PROMPT.format(topic=topic)
+            prompt = WELCOME_PROMPT.format(topic=topic, context_block=context_block)
             response = llm.invoke(prompt)
             welcome_text = (response.content if hasattr(response, "content") else str(response)) or (
-                f"Welcome! Today we're practicing: {topic}. When you're ready, tell me your thoughts."
+                f'What are your views on {topic}? Feel free to go deep—say whatever comes to mind.'
             )
             welcome_text = welcome_text.strip()
             ConversationMessage.objects.create(
@@ -835,7 +897,9 @@ def voice_chat(request):
             resp["Cache-Control"] = "no-cache"
             return resp
         except Exception as e:
-            fallback = f"Welcome! Today we're practicing: {topic}. When you're ready, tell me your thoughts."
+            fallback = (
+                f'What are your views on {topic}? Feel free to go deep—say whatever comes to mind.'
+            )
             ConversationMessage.objects.create(
                 conversation=conversation,
                 role=ConversationMessage.ROLE_ASSISTANT,
@@ -996,21 +1060,44 @@ def rephrase(request):
         )
 
 
-GRAMMAR_PROMPT = """You are an English grammar coach. Analyze the following text for grammatical mistakes. Be clear and educational so the user can understand what they got wrong.
+GRAMMAR_PROMPT = """You are an English coach for SPOKEN language. The text below is a transcript of what someone said out loud (speech-to-text). It is NOT formal writing.
 
-User's text:
+User's spoken transcript:
 {text}
+
+Your job: flag only mistakes people make when **talking** — patterns that would sound wrong if you heard them in conversation.
+
+INCLUDE (spoken-grammar issues only), for example:
+- Wrong verb tense or form for what they mean ("I didn't went", "Yesterday I go there")
+- Subject–verb disagreement ("they is", "people doesn't")
+- Wrong or missing articles in speech where it sounds clearly wrong ("I am engineer", "pass me apple")
+- Wrong prepositions people actually say ("depend of", "married with")
+- Clear agreement or pronoun slips ("he... I mean she", wrong he/she for antecedent)
+- Non-standard double negatives only if they confuse meaning
+- Word order that sounds ungrammatical in spoken English (not just a casual fragment)
+- Countable/uncountable errors that sound wrong aloud ("many informations", "much friends")
+
+DO NOT flag as mistakes (ignore completely):
+- Missing commas, semicolons, colons, or other punctuation (speech has no punctuation)
+- "Run-on" or "comma splice" as writing problems
+- Capitalization at the start of sentences (transcripts are often lowercase)
+- Contractions vs full forms ("I've" vs "I have" — both fine in speech)
+- Informal or conversational fragments if they sound natural when spoken
+- Stylistic or written-only rules (Oxford comma, formal essay tone, etc.)
+- Minor disfluencies ("um", "like", false starts) unless they create a grammatical error
+
+If the transcript is only missing punctuation or would be "wrong" only on paper, return ZERO mistakes.
 
 Respond with ONLY a valid JSON object (no other text), in this exact format:
 {{
   "mistakes": [
-    {{ "wrong": "exact phrase they said that is wrong", "correct": "corrected version", "rule": "short explanation (e.g. 'Use past tense for completed actions')" }}
+    {{ "wrong": "exact phrase from their transcript", "correct": "how a fluent speaker would say it", "rule": "short explanation tied to spoken English" }}
   ],
-  "corrected_sentence": "the full sentence(s) with all corrections applied",
-  "summary": "1-3 sentences: what this user tends to get confused about (e.g. tense, articles, subject-verb agreement) and a brief tip to improve"
+  "corrected_sentence": "the same ideas rephrased with only spoken-grammar fixes (do not add heavy punctuation for style)",
+  "summary": "1-3 sentences: what to watch when speaking, or praise if nothing to fix"
 }}
 
-If there are no grammatical mistakes, return: {{ "mistakes": [], "corrected_sentence": "<repeat the user's text unchanged>", "summary": "No grammar mistakes found. Good job!" }}
+If there are no spoken-grammar issues, return: {{ "mistakes": [], "corrected_sentence": "<repeat the user's text unchanged>", "summary": "No spoken grammar issues stood out — your wording sounds natural for conversation." }}
 """
 
 
