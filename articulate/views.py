@@ -852,7 +852,6 @@ def voice_chat(request):
     except (TypeError, ValueError):
         spoken_duration = 0.0
     audio_file = request.FILES.get("audio")
-    solo_mode = request.data.get("solo") in (True, "true", "1", "solo", "yes")
 
     # Welcome: first message from AI when conversation has no messages yet
     if want_welcome and conversation_id and not text and not audio_file:
@@ -964,9 +963,6 @@ def voice_chat(request):
                 sequence=next_seq,
                 spoken_duration_seconds=spoken_duration if spoken_duration > 0 else None,
             )
-
-        if solo_mode:
-            return Response({"text": ""})
 
         llm = get_llm()
         prompt_template = build_voice_prompt(topic, history)
