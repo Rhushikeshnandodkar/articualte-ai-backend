@@ -25,6 +25,7 @@ from .utils_stats import compute_conversation_stats
 from .utils_streaks import compute_and_update_profile_streaks
 
 import os
+import random
 
 try:
     from dotenv import load_dotenv
@@ -77,6 +78,7 @@ How to shape the question:
 - **Listen to what they actually said:**
   - If they talk about a **book, story, movie, news event, or idea**, ask about **that content**—what happened, a character, why something mattered, what they think about a part of it. You can add a small personal angle ("What would you do…?") when it fits, but do **not** only ask vague personal questions if they were clearly discussing a text or plot.
   - If they share a personal experience or opinion, you can ask a simple follow-up about their experience or view, still tied to the topic when possible.
+- **If they want to change direction** (e.g. they say they are bored, want another topic, ask to talk about something else, or refuse the current theme): **do not push the same practice topic.** Reply with **exactly one** new, easy question about a **different** subject. Pick something fresh and varied—examples of angles (choose one at random, do not list them): a simple memory from childhood, a favourite movie or show and why, last weekend, food they love, a place they want to visit, a small win at school or work, a song they like, or an easy "what would you do if…" scenario. The new question must **not** reuse or closely paraphrase the practice topic title: "{topic}". Keep it **simple English**, same length rules as above.
 - Do not ask more than one question. No lists. No "Question 1:".
 
 {history_text}User just said: {{question}}
@@ -399,38 +401,126 @@ def _get_active_plan_tier(profile: UserProfile) -> str:
     return "free"
 
 
-def _daily_topic_prompt_with_history(past_titles: list) -> str:
+# Rotating "genres" for daily topics — server picks one at random so prompts don't cluster on the same angle.
+DAILY_TOPIC_GENRES = [
+    (
+        "Personal experience & memory",
+        "A specific story: a turning point, awkward moment, small win, failure that taught something, or a day they still remember. Not vague 'introduce yourself'.",
+    ),
+    (
+        "Favourites (pick ONE concrete thing)",
+        "Their favourite book, film, series, song, meal, city, holiday spot, teacher, childhood friend, or public figure — one anchor object and why it matters to them.",
+    ),
+    (
+        "Opinion — 'What do you think about…?'",
+        "A concrete opinion question: habits, work culture, social media, learning, money, health, generational differences, local life vs big cities, etc. Must be speakable in plain English, not a debate essay title.",
+    ),
+    (
+        "Hypothetical & role-play",
+        "'What if you were…' style: PM / mayor / school principal / startup CEO for one day, one superpower with a catch, winning a lottery, swapping jobs with someone, living 50 years ago or 50 years ahead. Pick ONE fresh scenario.",
+    ),
+    (
+        "People & relationships",
+        "Someone who changed them, saying no kindly, gratitude, jealousy they overcame, mentoring, or a hard conversation — grounded and human.",
+    ),
+    (
+        "Values & light philosophy",
+        "How they define success, one rule they'd add to society, what they'd tell their past self, regret vs lesson, time vs money — short and conversational.",
+    ),
+    (
+        "Senses & vivid description",
+        "Describe a place that feels like home, a sound or smell that transports them, a perfect slow morning, or a crowd vs solitude moment.",
+    ),
+    (
+        "Playful random",
+        "Desert-island picks, this-or-that (two oddly paired options), 'you can only keep one memory', time-machine destination — still emotionally real, not a joke list.",
+    ),
+]
+
+DAILY_TOPIC_STYLE_NUDGES = [
+    "Twist the genre with an unexpected but fair detail (a constraint, a comparison, or a 'what would you do first?').",
+    "Make the title a single crisp question the user can answer without needing research.",
+    "Prefer specificity over slogans: names of situations, not abstract nouns alone.",
+    "If the genre could sound cliché, add one concrete hook (time, place, trade-off, or audience).",
+    "Keep it inclusive: any adult from any background could have something to say.",
+]
+
+# When the LLM fails, avoid always returning the same fallback line.
+DAILY_TOPIC_FALLBACKS = [
+    (
+        "What is one small habit that changed your daily life, and how did you actually stick with it?",
+        "Talk about the habit, why it was hard, and what finally made it stick — not a generic self-help list.",
+    ),
+    (
+        "Name a book or film that stuck with you — what scene or idea do you still think about?",
+        "Pick one work and explain what it changed in how you see things.",
+    ),
+    (
+        "If you were in charge of your city for one day, what is the first problem you would try to fix, and how?",
+        "Stay practical: one day, one focus, and what you would actually do first.",
+    ),
+    (
+        "What do you think about people sharing almost everything online — mostly good, mostly bad, or mixed? Why?",
+        "Give your honest take and one personal example or boundary you use.",
+    ),
+    (
+        "Describe a person (not naming them if you prefer) who quietly helped you — what did they do that mattered?",
+        "A real relationship moment, not a thank-you speech template.",
+    ),
+    (
+        "What is one thing you used to believe strongly that you see differently now?",
+        "What shifted your mind — an experience, a person, or time?",
+    ),
+]
+
+
+def _daily_topic_prompt_with_history(
+    past_titles: list,
+    *,
+    genre_label: str,
+    genre_detail: str,
+    style_nudge: str,
+) -> str:
     past_titles = [t for t in (past_titles or []) if isinstance(t, str) and t.strip()]
     past_titles = past_titles[-20:]
     if past_titles:
         listed = "\n".join(f"- {t}" for t in past_titles)
         avoid = f"""
-The user has already received these daily topics before (including earlier today). You MUST propose something clearly different — new angle, setting, or theme. Do not repeat, rephrase, or closely mimic any line below:
+The user has already received these daily prompts before (including earlier today). Rules:
+- Do NOT repeat, rephrase, or closely mimic any title or core idea from the list below — including synonyms (e.g. if they had 'best day', do not do 'happiest moment' or 'perfect day').
+- Pick a completely different genre-feel from those past prompts, not just different wording in the same theme.
+- If recent prompts were all personal stories, lean harder into opinion, hypothetical, or favourites — and vice versa.
 
+Already used (forbidden to echo):
 {listed}
 """
     else:
         avoid = ""
 
-    return f"""You are a creative, modern communication coach.
+    return f"""You are a creative speaking coach for adults learning fluent, natural English.
 
-Generate ONE engaging, open-ended daily speaking topic for an adult learner.
+Generate exactly ONE new daily speaking topic. It must feel **fresh and a bit random** — like a varied podcast prompt, not a textbook.
+
+=== REQUIRED GENRE FOR TODAY (follow this — do not ignore) ===
+Genre label: **{genre_label}**
+How to use it: {genre_detail}
+
+=== VARIETY NUDGE ===
+{style_nudge}
+
 {avoid}
-The topic should:
-- be concrete and make the user immediately want to speak
-- feel like a real situation, thought, or feeling (not academic)
-- work in ANY field (general life, work, relationships, self-reflection, society, technology, etc.)
-- invite at least a 30–60 second answer
+Hard rules:
+- Today's topic MUST clearly belong to the genre above, but the **exact angle inside that genre should feel randomised** (different sub-idea each time).
+- Mix styles across days: personal memory, favourites (book/movie/place/friend/politician-as-public-figure opinion), 'what do you think about…?', and 'what if you were PM / boss / invisible / time-traveller' type hypotheticals are all fair — **within today's chosen genre**.
+- Concrete, spoken-friendly, one main question in the title; user should want to talk 30–90 seconds without preparation.
+- No academic essay titles, no yes/no-only questions, no generic single words like 'technology' or 'environment'.
 
-Good examples of the STYLE (do NOT copy these):
-- "Tell me about the best day of your life. What made it so special?"
-- "Do you ever feel that your school days were the best days of your life? Why or why not?"
-- "If you could relive one ordinary day from the last year, which day would you choose and why?"
+Bad (avoid): repeating past themes, vague labels, multiple unrelated questions in one title.
 
 Return ONLY a valid JSON object with exactly:
 {{
-  "title": "short one-line question (max 120 characters, no numbering, no quotes)",
-  "description": "one or two short sentences that give context and help the user understand what to talk about"
+  "title": "short one-line question (max 120 characters, no numbering, no surrounding quotes in the string)",
+  "description": "one or two short sentences: context + what to cover when they speak"
 }}
 """
 
@@ -726,12 +816,8 @@ def daily_topic(request):
     try:
         profile = UserProfile.objects.get(user=request.user)
     except UserProfile.DoesNotExist:
-        return Response(
-            {
-                "title": "Tell me about the best day of your life.",
-                "description": "Share what happened, who was there, and why it still feels special to you.",
-            }
-        )
+        t0, d0 = random.choice(DAILY_TOPIC_FALLBACKS)
+        return Response({"title": t0, "description": d0})
 
     # New calendar day: allow a fresh daily topic flow.
     if profile.daily_topic_date != today:
@@ -757,7 +843,14 @@ def daily_topic(request):
         past_raw = []
     past_titles = [str(t).strip() for t in past_raw if str(t).strip()]
 
-    prompt = _daily_topic_prompt_with_history(past_titles)
+    genre_label, genre_detail = random.choice(DAILY_TOPIC_GENRES)
+    style_nudge = random.choice(DAILY_TOPIC_STYLE_NUDGES)
+    prompt = _daily_topic_prompt_with_history(
+        past_titles,
+        genre_label=genre_label,
+        genre_detail=genre_detail,
+        style_nudge=style_nudge,
+    )
     try:
         llm = get_llm()
         response = llm.invoke(prompt)
@@ -775,9 +868,11 @@ def daily_topic(request):
     description = (data.get("description") or "").strip()
 
     if not title:
-        title = "Tell me about the best day of your life."
-    if not description:
-        description = "Share what happened, who was there, and why it still feels special to you."
+        title, description = random.choice(DAILY_TOPIC_FALLBACKS)
+    elif not description:
+        description = (
+            "Answer in your own words with examples or a short story — aim for at least 30–60 seconds of natural speech."
+        )
 
     past_titles.append(title)
     profile.daily_topic_past_titles = past_titles[-25:]
