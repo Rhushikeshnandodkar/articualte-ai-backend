@@ -404,72 +404,72 @@ def _get_active_plan_tier(profile: UserProfile) -> str:
 # Rotating "genres" for daily topics — server picks one at random so prompts don't cluster on the same angle.
 DAILY_TOPIC_GENRES = [
     (
-        "Personal experience & memory",
-        "A specific story: a turning point, awkward moment, small win, failure that taught something, or a day they still remember. Not vague 'introduce yourself'.",
+        "Personal story",
+        "A specific real moment: a turning point, awkward moment, small win, failure that taught something, or a day they still remember. Not vague 'introduce yourself'.",
     ),
     (
-        "Favourites (pick ONE concrete thing)",
-        "Their favourite book, film, series, song, meal, city, holiday spot, teacher, childhood friend, or public figure — one anchor object and why it matters to them.",
+        "A favorite thing",
+        "One favorite: book, movie, series, song, meal, city, holiday spot, teacher, childhood friend, or a public figure. Explain why it matters to them.",
     ),
     (
-        "Opinion — 'What do you think about…?'",
-        "A concrete opinion question: habits, work culture, social media, learning, money, health, generational differences, local life vs big cities, etc. Must be speakable in plain English, not a debate essay title.",
+        "Opinion question",
+        "A clear opinion question: habits, learning, money, health, work style, social media, or daily life choices. Must be answerable with simple everyday English.",
     ),
     (
-        "Hypothetical & role-play",
-        "'What if you were…' style: PM / mayor / school principal / startup CEO for one day, one superpower with a catch, winning a lottery, swapping jobs with someone, living 50 years ago or 50 years ahead. Pick ONE fresh scenario.",
+        "Simple role-play idea",
+        "'What if you were...?' for one day: mayor, school principal, startup CEO, or someone with one superpower (with a catch). Pick ONE scenario and what their first step is.",
     ),
     (
-        "People & relationships",
-        "Someone who changed them, saying no kindly, gratitude, jealousy they overcame, mentoring, or a hard conversation — grounded and human.",
+        "People and relationships",
+        "A real human situation: a person who helped them, saying no kindly, gratitude, handling jealousy, mentoring, or one hard conversation.",
     ),
     (
-        "Values & light philosophy",
-        "How they define success, one rule they'd add to society, what they'd tell their past self, regret vs lesson, time vs money — short and conversational.",
+        "Values and choices",
+        "A short choice in everyday life: time vs money, honesty vs kindness, regret vs lesson, success in your life, or one simple rule they would add to society.",
     ),
     (
-        "Senses & vivid description",
-        "Describe a place that feels like home, a sound or smell that transports them, a perfect slow morning, or a crowd vs solitude moment.",
+        "Describe a moment",
+        "Describe a place that feels like home, a sound or smell that brings a memory, a perfect slow morning, or a crowd vs solitude moment.",
     ),
     (
-        "Playful random",
-        "Desert-island picks, this-or-that (two oddly paired options), 'you can only keep one memory', time-machine destination — still emotionally real, not a joke list.",
+        "Fun but real",
+        "A fun choice with emotion: desert-island picks, this-or-that, 'you can only keep one memory', or a time-travel destination. Not a random joke list.",
     ),
 ]
 
 DAILY_TOPIC_STYLE_NUDGES = [
-    "Twist the genre with an unexpected but fair detail (a constraint, a comparison, or a 'what would you do first?').",
-    "Make the title a single crisp question the user can answer without needing research.",
-    "Prefer specificity over slogans: names of situations, not abstract nouns alone.",
-    "If the genre could sound cliché, add one concrete hook (time, place, trade-off, or audience).",
-    "Keep it inclusive: any adult from any background could have something to say.",
+    "Use simple everyday English in the title.",
+    "Keep the title easy to say out loud (no rare words).",
+    "Aim for about 6–8 words when possible; it can be longer if still simple.",
+    "Prefer a clear situation or choice over abstract labels.",
+    "Keep it friendly and inclusive for any adult.",
 ]
 
 # When the LLM fails, avoid always returning the same fallback line.
 DAILY_TOPIC_FALLBACKS = [
     (
-        "What is one small habit that changed your daily life, and how did you actually stick with it?",
-        "Talk about the habit, why it was hard, and what finally made it stick — not a generic self-help list.",
+        "One habit that changed your daily life",
+        "Talk about the habit, why it was hard, and what finally made it stick.",
     ),
     (
-        "Name a book or film that stuck with you — what scene or idea do you still think about?",
-        "Pick one work and explain what it changed in how you see things.",
+        "A book or movie that changed you",
+        "Pick one story and share what it changed in how you think.",
     ),
     (
-        "If you were in charge of your city for one day, what is the first problem you would try to fix, and how?",
-        "Stay practical: one day, one focus, and what you would actually do first.",
+        "Fix one problem in your city",
+        "Stay practical: one problem and what you would do first.",
     ),
     (
-        "What do you think about people sharing almost everything online — mostly good, mostly bad, or mixed? Why?",
-        "Give your honest take and one personal example or boundary you use.",
+        "What do you think about sharing online",
+        "Share your honest opinion and one example or rule you follow.",
     ),
     (
-        "Describe a person (not naming them if you prefer) who quietly helped you — what did they do that mattered?",
-        "A real relationship moment, not a thank-you speech template.",
+        "A person who helped you quietly",
+        "Describe one real moment and why it mattered to you.",
     ),
     (
-        "What is one thing you used to believe strongly that you see differently now?",
-        "What shifted your mind — an experience, a person, or time?",
+        "A belief you changed over time",
+        "Explain what you believed before and what changed your mind.",
     ),
 ]
 
@@ -512,14 +512,16 @@ How to use it: {genre_detail}
 Hard rules:
 - Today's topic MUST clearly belong to the genre above, but the **exact angle inside that genre should feel randomised** (different sub-idea each time).
 - Mix styles across days: personal memory, favourites (book/movie/place/friend/politician-as-public-figure opinion), 'what do you think about…?', and 'what if you were PM / boss / invisible / time-traveller' type hypotheticals are all fair — **within today's chosen genre**.
-- Concrete, spoken-friendly, one main question in the title; user should want to talk 30–90 seconds without preparation.
+- Concrete and spoken-friendly: one main question or clear prompt in the title.
+- Use simple beginner-friendly English (everyday words, no rare phrases).
+- Aim for about 6–8 words in the title when possible; it can be slightly longer if still simple.
 - No academic essay titles, no yes/no-only questions, no generic single words like 'technology' or 'environment'.
 
 Bad (avoid): repeating past themes, vague labels, multiple unrelated questions in one title.
 
 Return ONLY a valid JSON object with exactly:
 {{
-  "title": "short one-line question (max 120 characters, no numbering, no surrounding quotes in the string)",
+  "title": "simple one-line prompt (max 120 characters, no numbering, no surrounding quotes in the string; aim ~6–8 words)",
   "description": "one or two short sentences: context + what to cover when they speak"
 }}
 """
@@ -630,13 +632,88 @@ def conversation_end(request, pk):
 
 # ---------- LLM suggested topics from profile ----------
 
+RECOMMENDED_INTEREST_GENRES = [
+    (
+        "Personal story",
+        "Create a topic that asks for a real story the user lived (a turning point, awkward moment, small win, or lesson).",
+    ),
+    (
+        "A favorite thing",
+        "Create a topic centered on ONE favorite (book, movie, series, song, meal, city, holiday spot, friend, or a public figure). Ask why it matters.",
+    ),
+    (
+        "Opinion question",
+        "Create an opinion prompt with simple everyday English (not a debate essay title). Invite feelings + one example.",
+    ),
+    (
+        "Simple role-play idea",
+        "Create a simple scenario question (e.g. mayor, school principal, startup CEO for one day). Make it specific and include a clear first decision.",
+    ),
+    (
+        "People and real conversations",
+        "Create a real conversation topic (saying no kindly, giving feedback, handling jealousy, mentoring, gratitude, apology, or a tough boundary).",
+    ),
+]
+
+RECOMMENDED_RANDOM_GENRES = [
+    (
+        "Fun but real",
+        "Create a fun-but-real scenario (a surprise meeting, 'you get one superpower for a day', or a strange but believable event).",
+    ),
+    (
+        "Simple life choices",
+        "Create a short choice topic (success vs time, regret vs lesson, honesty vs kindness, or one simple rule for society).",
+    ),
+    (
+        "Describe a moment",
+        "Create a prompt focused on describing a place or moment (a perfect slow morning, a smell/sound memory, crowd vs solitude).",
+    ),
+    (
+        "Choose with a small constraint",
+        "Create a topic where they choose under a simple constraint (two choices, desert-island pick, time-travel destination).",
+    ),
+    (
+        "Workplace situation",
+        "Create a workplace-style scenario (a bad meeting, awkward update, or handling a frustrated customer) but do NOT tie it to their interest keywords.",
+    ),
+]
+
+RECOMMENDED_STYLE_NUDGES = [
+    "Make every title simple and beginner-friendly.",
+    "Aim for about 6–8 words per title when possible.",
+    "Use everyday words and one clear prompt (no complex phrases).",
+    "Avoid clichés and vague labels.",
+    "Vary the question style across topics (story vs opinion vs scenario).",
+    "Make it easy to start speaking right away (no research needed).",
+]
+
 SUGGESTED_TOPICS_PROMPT = """You are a sharp, modern communication coach helping users practice spoken English and real-life conversations.
 
 You must suggest topics that feel **exciting, specific, and emotionally engaging** – things the user would genuinely *want* to talk about, not school-style or textbook topics.
 
 Topics can be vivid scenario titles OR open-ended questions – both work great. Open-ended questions (e.g. "What's the most difficult decision you've ever made at work?") often feel more natural to answer.
 
-Based on the user's profile below, suggest exactly 3 to 5 SPECIFIC, high‑engagement conversation practice topics that would feel natural and interesting for this person.
+Return exactly 7 SPECIFIC, high‑engagement conversation practice topics in this exact order.
+
+The batch MUST include BOTH:
+- Topics 1-4: Interest-linked (each topic must clearly connect to the user's interests/goal).
+- Topics 5-7: Fully random (topics that are NOT tied to the user's interests/goal; still realistic and emotionally engaging).
+
+Interest keywords you can use (not every keyword must appear, but every interest-linked topic must connect):
+{interest_keywords_section}
+
+Interest-linked genre hints (Topics 1-4 must follow these genres in this order):
+1) {interest_genre_1}
+2) {interest_genre_2}
+3) {interest_genre_3}
+4) {interest_genre_4}
+
+Random genre hints (Topics 5-7 must follow these genres in this order):
+5) {random_genre_1}
+6) {random_genre_2}
+7) {random_genre_3}
+
+{style_nudge}
 
 {previous_topics_section}
 
@@ -654,12 +731,13 @@ Avoid:
 - bland titles like “Daily routine” or “My city”
 - yes/no questions or topics that can be answered in one sentence
 - repeating or closely mimicking any topic from the "Previously shown" list above
+- using the same opening-question template for multiple topics (vary structure)
 
 Return ONLY a valid JSON array of objects. Each object must have exactly:
-- "title": string (short, vivid topic name, e.g. "Imagine you meet Elon Musk at a meetup", "If you were Prime Minister of India for a day")
+- "title": string (simple topic title/prompt for beginners, ~14–18 words when possible; use everyday words; easy to read aloud)
 - "category": string (one word or short label, e.g. "Career", "Leadership", "Favorites", "Experience", "Imagination", "Tech", "Medicine")
-- "description": string (short, punchy teaser of 4 to 10 words describing the topic, e.g. "Describe how you’d use one day as PM", "Share a favourite book and why it matters")
-- "opening_question": string (ONE short, specific, open question in one sentence that makes the user start talking immediately about this exact topic. It must be concrete and natural, like: "In today’s geopolitical situation, what concerns you most about China and India, and why?" or "What is the most difficult feedback conversation you’ve ever had with a teammate?". Do NOT use generic templates like "When you think about X..." or "What comes to your mind?".)
+- "description": string (short, easy teaser of 4 to 10 words describing the topic)
+- "opening_question": string (ONE short, clear open question in one sentence that makes the user start talking immediately about this exact topic)
 
 User profile:
 - Profession: {profession}
@@ -668,56 +746,103 @@ User profile:
 - Interests: {interests}
 - Bio: {bio}
 
-Return only the JSON array of 3-5 objects with title, category, description, and opening_question:"""
+Return ONLY the JSON array of exactly 7 objects with title, category, description, and opening_question:"""
 
 
 DEFAULT_TOPICS_STRUCTURED = [
     {
-        "title": "Imagine you meet Elon Musk at a small meetup",
+        "title": "Meeting Elon Musk at a small meetup",
         "category": "Imagination",
         "description": "Describe the conversation and questions you’d ask",
         "opening_question": "If you met Elon Musk at a small meetup tonight, what is the first thing you would say to him and why?",
     },
     {
-        "title": "If you were Prime Minister of India for one day",
+        "title": "If you were a leader for one day",
         "category": "Imagination",
         "description": "Explain your top 2-3 decisions and why",
         "opening_question": "If you were Prime Minister of India for one day, what is the very first decision you would make and why?",
     },
     {
-        "title": "Your favourite book or movie that changed you",
+        "title": "A book or movie that changed your mind",
         "category": "Favorites",
         "description": "Share the story and how it impacted your thinking",
         "opening_question": "What is one book or movie that really changed how you think, and what exactly did it change for you?",
     },
     {
-        "title": "Handling a really tough situation at work",
+        "title": "A hard moment at work and what you did",
         "category": "Experience",
-        "description": "Tell a real story with challenges and decisions",
-        "opening_question": "Think of a really tough situation you faced at work. What happened, and what was the hardest decision you had to make?",
+        "description": "Share a real story with one hard choice",
+        "opening_question": "Think of a hard situation you faced at work. What happened, and what was the hardest decision you had to make?",
     },
     {
-        "title": "Explaining a complex topic in your field to a friend",
+        "title": "Explain one idea in simple words",
         "category": "Career",
-        "description": "Practice simplifying something technical or advanced",
-        "opening_question": "Pick one complex idea from your field. How would you explain it in simple language to a friend who knows nothing about it?",
+        "description": "Practice explaining simply to a friend",
+        "opening_question": "Pick one idea from your field. How would you explain it in simple words to a friend who knows nothing about it?",
+    },
+    {
+        "title": "Do you choose success or more time",
+        "category": "Values",
+        "description": "Give your opinion with one example",
+        "opening_question": "What do you think about choosing between long-term success and more time for yourself, and why?",
+    },
+    {
+        "title": "A kind thing someone did for you",
+        "category": "Experience",
+        "description": "Share the moment and how it changed you",
+        "opening_question": "Describe a kind moment from your past that you still remember, and how it changed how you see people.",
     },
 ]
+
+
+def _sanitize_topic_title(title: str) -> str:
+    """
+    Make AI-generated titles easier to read for beginners.
+
+    - Converts common unicode punctuation to ASCII
+    - Normalizes whitespace
+    - Removes wrapping quotes
+    """
+    if title is None:
+        return ""
+    t = str(title).strip()
+    if not t:
+        return ""
+    t = (
+        t.replace("—", "-")
+        .replace("–", "-")
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("’", "'")
+    )
+    t = " ".join(t.split())
+    if len(t) >= 2 and ((t[0] == '"' and t[-1] == '"') or (t[0] == "'" and t[-1] == "'")):
+        t = t[1:-1].strip()
+    return t
 
 
 def _normalize_topic_item(item):
     """Ensure item has title, category, description, opening_question (strings)."""
     if isinstance(item, str):
-        title = item.strip()
+        title = _sanitize_topic_title(item)
         return {
             "title": title,
             "category": "General",
             "description": "Practice your communication skills.",
-            "opening_question": f"In your own words, what do you think about {title} in today’s world?",
+            "opening_question": random.choice(
+                [
+                    f"Describe a time related to “{title}” and what you learned.",
+                    f"What’s your honest opinion on “{title}”, and what’s one example that shaped it?",
+                    f"If “{title}” suddenly became urgent this week, what would you do first and why?",
+                ]
+            ),
         }
     if not isinstance(item, dict):
         return None
     title = (item.get("title") or item.get("name") or "").strip()
+    if not title:
+        return None
+    title = _sanitize_topic_title(title)
     if not title:
         return None
     category = (item.get("category") or item.get("tag") or "General").strip() or "General"
@@ -732,7 +857,13 @@ def _normalize_topic_item(item):
     )
     opening_question = (opening_question or "").strip()
     if not opening_question:
-        opening_question = f"In your own words, what do you think about {title} in today’s world?"
+        opening_question = random.choice(
+            [
+                f"Describe a real moment that connects to “{title}”. What happened and why does it matter to you?",
+                f"What’s your honest take on “{title}”, and what’s one example from your life?",
+                f"If you had to handle “{title}” today, what would your first step be?",
+            ]
+        )
     return {
         "title": title,
         "category": category,
@@ -744,7 +875,7 @@ def _normalize_topic_item(item):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def suggested_topics(request):
-    """Get 3-5 personalized topic suggestions from LLM (title, category, description)."""
+    """Get 7 personalized topic suggestions from LLM (title, category, description)."""
     import json
     import re
     try:
@@ -757,9 +888,48 @@ def suggested_topics(request):
     interests = (profile.interests_text or "").strip() or "Not specified"
     bio = (profile.bio or "").strip() or "Not specified"
 
+    # Build a stronger anti-repeat list:
+    # - titles previously shown to the user (from dashboard refresh)
+    # - titles the user already practiced in past sessions
+    # - titles from daily topic history
+    # (LLMs can still drift, but giving more "do not repeat" text helps reduce pattern repeats.)
+
     # Parse previously shown topic titles (pipe-separated) so we don't repeat them on refresh
     previous_titles_raw = request.GET.get("previous_titles", "")
     previous_titles = [t.strip() for t in previous_titles_raw.split("|") if t.strip()]
+
+    # Add extra history from sessions and daily topic rotation.
+    seen = set()
+    combined_previous_titles = []
+
+    def _add_prev(t):
+        tt = str(t).strip()
+        if not tt or tt in seen:
+            return
+        seen.add(tt)
+        combined_previous_titles.append(tt)
+
+    for t in previous_titles:
+        _add_prev(t)
+    try:
+        if isinstance(getattr(profile, "daily_topic_past_titles", None), list):
+            for t in profile.daily_topic_past_titles:
+                _add_prev(t)
+    except Exception:
+        pass
+    try:
+        # Grab the last few ended conversation topics to reduce repeats across days.
+        conv_topics = (
+            Conversation.objects.filter(user=request.user, status=Conversation.STATUS_ENDED)
+            .values_list("topic", flat=True)[:25]
+        )
+        for t in conv_topics:
+            _add_prev(t)
+    except Exception:
+        pass
+
+    previous_titles = combined_previous_titles[:25]
+
     if previous_titles:
         previous_topics_section = (
             "PREVIOUSLY SHOWN TOPICS (do NOT repeat these – suggest completely NEW and different topics):\n"
@@ -769,6 +939,27 @@ def suggested_topics(request):
     else:
         previous_topics_section = ""
 
+    # Extract a few concrete interest keywords to anchor the first 4 topics.
+    # interests_text is user-written, so be defensive.
+    interest_keywords = []
+    try:
+        raw_parts = re.split(r"[,\n;]+", interests or "")
+        for p in raw_parts:
+            p = (p or "").strip()
+            if p and len(p) <= 40:
+                interest_keywords.append(p)
+    except Exception:
+        pass
+    if not interest_keywords:
+        interest_keywords = [interests]
+    interest_keywords = interest_keywords[:10]
+    interest_keywords_section = "\n".join(f"- {k}" for k in interest_keywords[:7])
+
+    # Randomize the genres/order for this batch.
+    interest_hints = random.sample(RECOMMENDED_INTEREST_GENRES, k=4)
+    random_hints = random.sample(RECOMMENDED_RANDOM_GENRES, k=3)
+    style_nudge = random.choice(RECOMMENDED_STYLE_NUDGES)
+
     prompt = SUGGESTED_TOPICS_PROMPT.format(
         profession=profession,
         goal=goal,
@@ -776,26 +967,40 @@ def suggested_topics(request):
         interests=interests,
         bio=bio,
         previous_topics_section=previous_topics_section,
+        interest_keywords_section=interest_keywords_section,
+        interest_genre_1=f"{interest_hints[0][0]} — {interest_hints[0][1]}",
+        interest_genre_2=f"{interest_hints[1][0]} — {interest_hints[1][1]}",
+        interest_genre_3=f"{interest_hints[2][0]} — {interest_hints[2][1]}",
+        interest_genre_4=f"{interest_hints[3][0]} — {interest_hints[3][1]}",
+        random_genre_1=f"{random_hints[0][0]} — {random_hints[0][1]}",
+        random_genre_2=f"{random_hints[1][0]} — {random_hints[1][1]}",
+        random_genre_3=f"{random_hints[2][0]} — {random_hints[2][1]}",
+        style_nudge=style_nudge,
     )
-    try:
-        llm = get_llm()
-        response = llm.invoke(prompt)
-        raw = response.content if hasattr(response, "content") else str(response)
-        raw = raw.strip()
-        array_match = re.search(r"\[[\s\S]*?\]", raw)
-        if array_match:
-            raw_list = json.loads(array_match.group())
-            if isinstance(raw_list, list) and len(raw_list) >= 1:
-                topics = []
-                for t in raw_list[:6]:
-                    normalized = _normalize_topic_item(t)
-                    if normalized:
-                        topics.append(normalized)
-                if topics:
-                    return Response({"topics": topics})
-        return Response({"topics": DEFAULT_TOPICS_STRUCTURED})
-    except Exception:
-        return Response({"topics": DEFAULT_TOPICS_STRUCTURED})
+    # Retry once if the model doesn't return enough items.
+    last_exc = None
+    for _ in range(2):
+        try:
+            llm = get_llm()
+            response = llm.invoke(prompt)
+            raw = response.content if hasattr(response, "content") else str(response)
+            raw = (raw or "").strip()
+            array_match = re.search(r"\[[\s\S]*?\]", raw)
+            if array_match:
+                raw_list = json.loads(array_match.group())
+                if isinstance(raw_list, list) and len(raw_list) >= 1:
+                    topics = []
+                    for t in raw_list[:7]:
+                        normalized = _normalize_topic_item(t)
+                        if normalized:
+                            topics.append(normalized)
+                    if len(topics) > 0:
+                        return Response({"topics": topics})
+            return Response({"topics": DEFAULT_TOPICS_STRUCTURED})
+        except Exception as exc:
+            last_exc = exc
+            continue
+    return Response({"topics": DEFAULT_TOPICS_STRUCTURED})
 
 
 @api_view(["GET"])
@@ -817,7 +1022,7 @@ def daily_topic(request):
         profile = UserProfile.objects.get(user=request.user)
     except UserProfile.DoesNotExist:
         t0, d0 = random.choice(DAILY_TOPIC_FALLBACKS)
-        return Response({"title": t0, "description": d0})
+        return Response({"title": _sanitize_topic_title(t0), "description": d0})
 
     # New calendar day: allow a fresh daily topic flow.
     if profile.daily_topic_date != today:
@@ -831,7 +1036,7 @@ def daily_topic(request):
     ):
         return Response(
             {
-                "title": profile.daily_topic_title,
+                "title": _sanitize_topic_title(profile.daily_topic_title),
                 "description": profile.daily_topic_description
                 or "Speak freely about this topic in your own words.",
             }
@@ -873,6 +1078,8 @@ def daily_topic(request):
         description = (
             "Answer in your own words with examples or a short story — aim for at least 30–60 seconds of natural speech."
         )
+
+    title = _sanitize_topic_title(title)
 
     past_titles.append(title)
     profile.daily_topic_past_titles = past_titles[-25:]
