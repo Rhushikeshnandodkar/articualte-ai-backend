@@ -1,10 +1,17 @@
+import logging
+import re
+
 from django.db import IntegrityError
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.parsers import JSONParser
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.tokens import RefreshToken
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_auth_requests
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.core.mail import send_mail
@@ -37,8 +44,132 @@ def _send_email(subject, message, to_emails, from_email=None):
         send_mail(subject, message, from_email, to_emails, fail_silently=True)
     except Exception as e:
         logger.exception("Email (SMTP) failed: %s", e)
-from .serializers import RegisterSerializer, UserSerializer, ProfileSerializer
+from .serializers import (
+    RegisterSerializer,
+    UserSerializer,
+    ProfileSerializer,
+    EmailOrUsernameTokenObtainPairSerializer,
+    resolve_user_from_login_identifier,
+)
 from articulate.utils_streaks import compute_and_update_profile_streaks
+
+logger = logging.getLogger(__name__)
+
+
+def _unique_username_for_google(email: str, sub: str) -> str:
+    """Build a unique Django username from email local-part; never changes existing users."""
+    local = email.split("@", 1)[0]
+    base = re.sub(r"[^a-zA-Z0-9_]", "_", local).strip("_")[:24] or "user"
+    if len(base) < 3:
+        base = f"user_{base}"
+    candidate = base
+    n = 0
+    while User.objects.filter(username__iexact=candidate).exists():
+        suffix = (sub or "")[-8:] if sub else get_random_string(8)
+        candidate = f"{base[:20]}_{suffix}"[:150]
+        n += 1
+        if n > 50:
+            candidate = ("g_" + get_random_string(16))[:150]
+            break
+    return candidate
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@parser_classes([JSONParser])
+def google_login(request):
+    """
+    Verify Google ID token, then find User by email (existing accounts keep password unchanged)
+    or create a new user with unusable password. Returns SimpleJWT access + refresh.
+    """
+    client_id = getattr(settings, "GOOGLE_CLIENT_ID", "") or ""
+    if not client_id:
+        return Response(
+            {"error": "Google Sign-In is not configured on the server."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    id_token_jwt = (request.data.get("id_token") or "").strip()
+    if not id_token_jwt:
+        return Response(
+            {"error": "id_token is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        request_adapter = google_auth_requests.Request()
+        claims = google_id_token.verify_oauth2_token(
+            id_token_jwt, request_adapter, client_id
+        )
+    except Exception as e:
+        logger.warning("Google id_token verification failed: %s", e)
+        return Response(
+            {"error": "Invalid or expired Google token."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    iss = claims.get("iss") or ""
+    if iss not in ("https://accounts.google.com", "accounts.google.com"):
+        return Response(
+            {"error": "Invalid token issuer."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    email = (claims.get("email") or "").strip().lower()
+    if not email:
+        return Response(
+            {"error": "Google account has no email."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not claims.get("email_verified", False):
+        return Response(
+            {"error": "Google email is not verified."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    sub = (claims.get("sub") or "")[:255]
+
+    user = User.objects.filter(email__iexact=email).first()
+    if user is None:
+        username = _unique_username_for_google(email, sub)
+        created = False
+        try:
+            user = User.objects.create(
+                username=username,
+                email=email,
+                first_name=(claims.get("given_name") or "")[:150],
+                last_name=(claims.get("family_name") or "")[:150],
+            )
+            created = True
+        except IntegrityError:
+            user = User.objects.filter(email__iexact=email).first()
+            if user is None:
+                raise
+        if created:
+            user.set_unusable_password()
+            user.save(update_fields=["password"])
+
+    profile, _ = UserProfile.objects.get_or_create(
+        user=user,
+        defaults={
+            "profession": "student",
+            "goal": "interview",
+            "communication_level": "beginner",
+        },
+    )
+    if not profile.email_verified:
+        profile.email_verified = True
+        profile.email_otp = None
+        profile.email_otp_expires_at = None
+        profile.save(
+            update_fields=["email_verified", "email_otp", "email_otp_expires_at"]
+        )
+
+    refresh = RefreshToken.for_user(user)
+    return Response(
+        {
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+        }
+    )
 
 
 def get_suggested_topics(profile):
@@ -158,13 +289,14 @@ class RegisterView(generics.CreateAPIView):
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     permission_classes = [AllowAny]
+    serializer_class = EmailOrUsernameTokenObtainPairSerializer
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
         if response.status_code == 200:
-            username = request.data.get("username", "")
-            try:
-                user = User.objects.get(username=username)
+            identifier = (request.data.get("username") or "").strip()
+            user = resolve_user_from_login_identifier(identifier)
+            if user is not None:
                 profile = UserProfile.objects.filter(user=user).first()
                 if profile and not profile.email_verified:
                     return Response(
@@ -175,8 +307,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                         },
                         status=status.HTTP_403_FORBIDDEN,
                     )
-            except User.DoesNotExist:
-                pass
         return response
 
 

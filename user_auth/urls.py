@@ -11,10 +11,12 @@ from .views import (
     subscribe,
     create_order,
     verify_payment,
+    google_login,
 )
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
+    path('google/', google_login, name='google_login'),
     path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('me/', CurrentUserView.as_view(), name='current_user'),

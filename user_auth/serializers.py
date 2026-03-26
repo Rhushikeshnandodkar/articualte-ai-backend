@@ -1,7 +1,38 @@
+from typing import Optional
+
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import UserProfile, Badge
+
+
+def resolve_user_from_login_identifier(identifier: str) -> Optional[User]:
+    """
+    Map the login field (username or email) to a User.
+    - If it contains '@', try email first (case-insensitive), then username.
+    - Otherwise match username only (case-insensitive), so existing username logins are unchanged.
+    """
+    identifier = (identifier or "").strip()
+    if not identifier:
+        return None
+    if "@" in identifier:
+        user = User.objects.filter(email__iexact=identifier).first()
+        if user is not None:
+            return user
+        return User.objects.filter(username__iexact=identifier).first()
+    return User.objects.filter(username__iexact=identifier).first()
+
+
+class EmailOrUsernameTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """Accept either Django username or email in the `username` field (SimpleJWT default)."""
+
+    def validate(self, attrs):
+        raw = (attrs.get("username") or "").strip()
+        user = resolve_user_from_login_identifier(raw)
+        if user is not None:
+            attrs["username"] = user.username
+        return super().validate(attrs)
 
 
 class UserSerializer(serializers.ModelSerializer):

@@ -34,7 +34,14 @@ ALLOWED_HOSTS = ['localhost', '127.0.0.1', "*"]
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+] + [
+    x.strip()
+    for x in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+    if x.strip()
 ]
+_frontend = os.getenv('FRONTEND_URL', '').strip().rstrip('/')
+if _frontend and _frontend not in CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + [_frontend]
 CORS_ALLOW_CREDENTIALS = True
 CORS_EXPOSE_HEADERS = ['X-AI-Response-Text']
 
@@ -102,6 +109,10 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 
 # This is what shows up in the “From” field of the email
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+
+# --- Google Sign-In (OAuth id_token verification) ---
+# Same Web client ID as VITE_GOOGLE_CLIENT_ID on the frontend.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 
 # --- Razorpay ---
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
