@@ -86,6 +86,60 @@ How to shape the question:
 Your single follow-up question (simple English only):"""
 
 
+TALKING_AGENT_START_PROMPT = """You are a friendly speaking partner for English practice.
+
+Your task: propose ONE talk topic for this user (based on their interests) and output ONE short opening line.
+
+Hard rules:
+- The opening line MUST be exactly ONE sentence, one line, <= 22 words.
+- The opening line MUST start by asking what they want to talk about today, then suggest your topic if they are unsure.
+- No greetings, no emojis, no bullet points, no extra text.
+- Keep English simple and spoken-friendly.
+- The topic MUST feel different across calls; avoid repeating generic topics.
+
+Return ONLY valid JSON with exactly:
+{{
+  "topic_title": "6-10 words max, simple, specific",
+  "opening_line": "one sentence, one line, <= 22 words"
+}}
+
+User profile:
+- Profession: {profession}
+- Goal: {goal}
+- Communication level: {communication_level}
+- Interests: {interests}
+- Bio: {bio}
+"""
+
+
+def build_talking_agent_prompt(topic: str, conversation_history: list) -> str:
+    """One-line talking agent reply prompt (follow-up question only)."""
+    history_text = ""
+    if conversation_history:
+        lines = []
+        for msg in conversation_history[-10:]:
+            who = "User" if msg["role"] == "user" else "You"
+            lines.append(f"{who}: {msg['content']}")
+        history_text = "\n".join(lines) + "\n\n"
+    return f"""You are a friendly speaking partner helping the user practice English by talking out loud.
+
+Conversation topic (stay loosely connected to this): {topic}
+
+Your job: reply with exactly ONE short follow-up question.
+
+Hard rules:
+- Output EXACTLY one sentence, one line, <= 18 words.
+- It MUST be a question and end with a '?'.
+- No greetings. No praise. No advice. No lists. No extra text.
+- Use simple everyday English.
+- Listen to what they said and ask about that specific content.
+- If they ask to change topic, switch to a new simple topic (different from "{topic}") and ask one easy question.
+
+{history_text}User just said: {{question}}
+
+Your one-line follow-up question:"""
+
+
 WELCOME_PROMPT = """You are a friendly English-speaking coach. Many users are students or still learning English. They have not spoken yet — YOU speak first.
 
 Write ONE plain-text opening only. Rules:
@@ -194,8 +248,8 @@ def topic_list(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def conversation_list(request):
-    """List current user's conversations (newest first)."""
-    qs = Conversation.objects.filter(user=request.user)
+    """List current user's completed conversations (newest first)."""
+    qs = Conversation.objects.filter(user=request.user, status=Conversation.STATUS_ENDED)
     serializer = ConversationListSerializer(qs, many=True)
     return Response(serializer.data)
 
@@ -698,6 +752,11 @@ Return exactly 7 SPECIFIC, high‑engagement conversation practice topics in thi
 The batch MUST include BOTH:
 - Topics 1-4: Interest-linked (each topic must clearly connect to the user's interests/goal).
 - Topics 5-7: Fully random (topics that are NOT tied to the user's interests/goal; still realistic and emotionally engaging).
+
+CRITICAL: Adapt difficulty to the user's communication level.
+- Beginner: very simple everyday words, short sentences, concrete situations, minimal abstract concepts; avoid idioms/slang; keep opening questions easy to answer.
+- Intermediate: slightly richer vocabulary, clearer structure, light nuance (pros/cons, feelings + example), still practical; avoid overly academic phrasing.
+- Advanced: more nuanced scenarios (trade-offs, ethics, leadership, negotiation), deeper reflection; still spoken-friendly (not essay titles).
 
 Interest keywords you can use (not every keyword must appear, but every interest-linked topic must connect):
 {interest_keywords_section}
@@ -1309,6 +1368,216 @@ def voice_chat(request):
             {"error": str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([JSONParser])
+def talking_agent_start(request):
+    """
+    Create a new conversation seeded for the "Random Talking Agent".
+    Returns a one-line AI opening message and the created conversation_id.
+    """
+    import json
+    import re
+
+    try:
+        profile = UserProfile.objects.get(user=request.user)
+    except UserProfile.DoesNotExist:
+        profile = None
+
+    profession = (profile.profession if profile is not None else None) or "Not specified"
+    goal = (profile.goal if profile is not None else None) or "general practice"
+    communication_level = (profile.communication_level if profile is not None else None) or "beginner"
+    interests = ((profile.interests_text if profile is not None else "") or "").strip() or "Not specified"
+    bio = ((profile.bio if profile is not None else "") or "").strip() or "Not specified"
+
+    prompt = TALKING_AGENT_START_PROMPT.format(
+        profession=profession,
+        goal=goal,
+        communication_level=communication_level,
+        interests=interests,
+        bio=bio,
+    )
+
+    topic_title = "Random talk"
+    opening_line = "What do you want to talk about today? If you're not sure, can we start with your favorite book?"
+    try:
+        llm = get_llm()
+        response = llm.invoke(prompt)
+        raw = response.content if hasattr(response, "content") else str(response)
+        raw = (raw or "").strip()
+        obj_match = re.search(r"\{[\s\S]*?\}", raw)
+        if obj_match:
+            data = json.loads(obj_match.group())
+            if isinstance(data, dict):
+                t = (data.get("topic_title") or "").strip()
+                o = (data.get("opening_line") or "").strip()
+                if t:
+                    topic_title = _sanitize_topic_title(t)[:120] or topic_title
+                if o:
+                    opening_line = " ".join(o.split())
+    except Exception:
+        pass
+
+    # Enforce one line / one sentence safety (best-effort)
+    opening_line = " ".join(str(opening_line).split())
+    if "\n" in opening_line:
+        opening_line = opening_line.split("\n")[0].strip()
+    if len(opening_line) > 200:
+        opening_line = opening_line[:200].rstrip()
+
+    conv = Conversation.objects.create(
+        user=request.user,
+        topic=topic_title,
+        topic_description="Random Talking Agent",
+    )
+    ConversationMessage.objects.create(
+        conversation=conv,
+        role=ConversationMessage.ROLE_ASSISTANT,
+        content=opening_line,
+        sequence=0,
+    )
+    return Response(
+        {
+            "conversation_id": conv.id,
+            "topic": conv.topic,
+            "opening_line": opening_line,
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([JSONParser, MultiPartParser, FormParser])
+def talking_agent_voice(request):
+    """
+    Like voice_chat, but forces 1-line AI replies for the Random Talking Agent.
+    Accepts { text } or multipart { audio }, plus optional conversation_id.
+    """
+    from user_auth.views import check_and_expire_subscription
+
+    try:
+        profile = UserProfile.objects.get(user=request.user)
+    except UserProfile.DoesNotExist:
+        profile = None
+
+    # Subscription gating (same logic as voice_chat)
+    plan_tier = "free"
+    if profile is not None:
+        check_and_expire_subscription(profile)
+        profile.refresh_from_db()
+        plan_tier = _get_active_plan_tier(profile)
+        minutes_limit = 10 if plan_tier == "free" else profile.subscription_plan.limit_minutes
+        today = timezone.now().date()
+        reset_date = profile.monthly_minutes_reset_at
+        if reset_date is None or reset_date.year != today.year or reset_date.month != today.month:
+            profile.monthly_minutes_used = 0
+            profile.monthly_minutes_reset_at = today
+            profile.save(update_fields=["monthly_minutes_used", "monthly_minutes_reset_at"])
+        used = profile.monthly_minutes_used or 0
+        if used >= minutes_limit:
+            return Response(
+                {
+                    "error": "You have used all your practice minutes for this month. "
+                    + ("Upgrade your plan for more minutes." if plan_tier == "free"
+                       else "Your monthly limit has been reached. Please renew or wait for the next billing cycle.")
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+    raw_cid = request.data.get("conversation_id")
+    try:
+        conversation_id = int(raw_cid) if raw_cid not in (None, "") else None
+    except (TypeError, ValueError):
+        conversation_id = None
+
+    text = (request.data.get("text") or "").strip()
+    try:
+        spoken_duration = float(request.data.get("spoken_duration_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        spoken_duration = 0.0
+    audio_file = request.FILES.get("audio")
+
+    if audio_file:
+        try:
+            text = speech_to_text_groq(audio_file)
+        except Exception as e:
+            return Response(
+                {"error": f"Speech-to-text failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    if not text:
+        return Response(
+            {"error": "Missing or empty text. Say something and click Pause, or send audio."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    conversation = None
+    topic = "practice conversation"
+    history = []
+    if conversation_id:
+        try:
+            conversation = Conversation.objects.get(
+                pk=conversation_id, user=request.user, status=Conversation.STATUS_ACTIVE
+            )
+            topic = conversation.topic or topic
+            history = [
+                {"role": m.role, "content": m.content}
+                for m in conversation.messages.order_by("sequence")[:20]
+            ]
+        except Conversation.DoesNotExist:
+            conversation = None
+
+    try:
+        if conversation:
+            next_seq = conversation.messages.count()
+            ConversationMessage.objects.create(
+                conversation=conversation,
+                role=ConversationMessage.ROLE_USER,
+                content=text,
+                sequence=next_seq,
+                spoken_duration_seconds=spoken_duration if spoken_duration > 0 else None,
+            )
+
+        llm = get_llm()
+        prompt_template = build_talking_agent_prompt(topic, history)
+        prompt = prompt_template.format(question=text)
+        response = llm.invoke(prompt)
+        response_text = response.content if hasattr(response, "content") else str(response)
+        response_text = (response_text or "").strip()
+        if not response_text:
+            response_text = "Could you tell me more?"
+        # Enforce one line, one question best-effort
+        response_text = " ".join(response_text.split())
+        if "\n" in response_text:
+            response_text = response_text.split("\n")[0].strip()
+        if not response_text.endswith("?"):
+            response_text = response_text.rstrip(".") + "?"
+
+        if conversation:
+            next_seq = conversation.messages.count()
+            ConversationMessage.objects.create(
+                conversation=conversation,
+                role=ConversationMessage.ROLE_ASSISTANT,
+                content=response_text,
+                sequence=next_seq,
+            )
+
+        # Builder plan: STT allowed, but NO TTS (text-only reply).
+        if plan_tier == "builder":
+            return Response({"text": response_text})
+
+        audio_bytes = text_to_speech_groq(response_text)
+        resp = HttpResponse(audio_bytes, content_type="audio/wav")
+        resp["Content-Length"] = len(audio_bytes)
+        resp["X-AI-Response-Text"] = base64.b64encode(response_text.encode("utf-8")).decode("ascii")
+        resp["Cache-Control"] = "no-cache"
+        return resp
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 REPHRASE_PROMPT = """You are a communication coach. The user said the following in a practice conversation. Your job is to rephrase their answer to make it clearer, more professional, and easier to understand—while keeping their meaning and intent.
 
