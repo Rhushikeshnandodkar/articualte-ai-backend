@@ -442,18 +442,54 @@ def list_subscription_plans(request):
             "price": float(p.price),
             "duration": p.duration,
             "limit_minutes": p.limit_minutes,
+            "plan_type": p.plan_type,
         }
         for p in plans
     ]
     return Response({"plans": data})
 
 
+def _plan_expiry_for(plan, today):
+    """Coarse (date-based) expiry used for display and plan-length comparisons.
+
+    Day passes track their real expiry via `subscription_expires_at` (exactly
+    24h after purchase); this date field is only the purchase date for them.
+    Monthly plans expire `duration` days from today.
+    """
+    if plan.plan_type == 'day_pass':
+        return today
+    return today + timezone.timedelta(days=plan.duration or 30)
+
+
+def _paid_not_expired(profile):
+    """True if the profile's paid plan hasn't expired yet.
+
+    Prefers the precise timestamp (day passes: exactly 24h after purchase);
+    falls back to the date-based expiry for monthly plans.
+    """
+    if profile is None or profile.payment_status != "paid" or profile.subscription_plan is None:
+        return False
+    if profile.subscription_expires_at is not None:
+        return timezone.now() < profile.subscription_expires_at
+    return (
+        profile.subscription_expiry is not None
+        and profile.subscription_expiry >= timezone.localdate()
+    )
+
+
 def _activate_subscription(profile, plan):
     """Apply plan to profile: set plan, dates, payment_status, reset monthly usage."""
+    now = timezone.now()
     today = timezone.localdate()
     profile.subscription_plan = plan
     profile.subscription_start_date = today
-    profile.subscription_expiry = today + timezone.timedelta(days=plan.duration or 30)
+    profile.subscription_expiry = _plan_expiry_for(plan, today)
+    # Day passes expire exactly 24 hours after purchase (precise timestamp).
+    # Monthly plans keep date-based expiry, so leave the timestamp unset.
+    if plan.plan_type == 'day_pass':
+        profile.subscription_expires_at = now + timezone.timedelta(hours=24)
+    else:
+        profile.subscription_expires_at = None
     profile.payment_status = "paid" if plan.price > 0 else "unpaid"
     profile.monthly_minutes_used = 0
     profile.monthly_minutes_reset_at = today
@@ -461,6 +497,7 @@ def _activate_subscription(profile, plan):
         "subscription_plan",
         "subscription_start_date",
         "subscription_expiry",
+        "subscription_expires_at",
         "payment_status",
         "monthly_minutes_used",
         "monthly_minutes_reset_at",
@@ -475,11 +512,19 @@ def check_and_expire_subscription(profile):
     """
     if profile.payment_status != "paid" or profile.subscription_plan is None:
         return False
+    now = timezone.now()
     today = timezone.localdate()
-    if profile.subscription_expiry is not None and profile.subscription_expiry < today:
+    # Prefer the precise timestamp (day passes: exactly 24h after purchase);
+    # fall back to the date-based expiry for monthly plans.
+    if profile.subscription_expires_at is not None:
+        expired = now >= profile.subscription_expires_at
+    else:
+        expired = profile.subscription_expiry is not None and profile.subscription_expiry < today
+    if expired:
         profile.subscription_plan = None
         profile.subscription_start_date = None
         profile.subscription_expiry = None
+        profile.subscription_expires_at = None
         profile.payment_status = "unpaid"
         profile.monthly_minutes_used = 0
         profile.monthly_minutes_reset_at = today
@@ -487,6 +532,7 @@ def check_and_expire_subscription(profile):
             "subscription_plan",
             "subscription_start_date",
             "subscription_expiry",
+            "subscription_expires_at",
             "payment_status",
             "monthly_minutes_used",
             "monthly_minutes_reset_at",
@@ -525,6 +571,16 @@ def create_order(request):
             {"error": "Free plans do not require payment. Use subscribe endpoint."},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    # A day pass would overwrite (and effectively shorten) an active paid plan,
+    # so block the purchase up front instead of taking money for nothing.
+    if plan.plan_type == 'day_pass':
+        profile = UserProfile.objects.filter(user=request.user).first()
+        if _paid_not_expired(profile):
+            return Response(
+                {"error": "You already have an active paid plan. The Day Pass is only for users without an active subscription."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     amount_paise = int(round(price * 100))
     if amount_paise < 100:
@@ -565,6 +621,7 @@ def create_order(request):
             "price": float(plan.price),
             "duration": plan.duration,
             "limit_minutes": plan.limit_minutes,
+            "plan_type": plan.plan_type,
         },
     })
 
@@ -602,16 +659,6 @@ def verify_payment(request):
     except (TypeError, ValueError):
         return Response({"error": "Invalid plan_id"}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        order = PaymentOrder.objects.get(
-            razorpay_order_id=order_id,
-            user=request.user,
-            plan_id=plan_id_int,
-            status="created",
-        )
-    except PaymentOrder.DoesNotExist:
-        return Response({"error": "Order not found or already processed"}, status=status.HTTP_404_NOT_FOUND)
-
     import razorpay
     key_id = getattr(settings, "RAZORPAY_KEY_ID", "")
     client = razorpay.Client(auth=(key_id, key_secret))
@@ -627,13 +674,36 @@ def verify_payment(request):
             return Response({"error": "Invalid payment signature"}, status=status.HTTP_400_BAD_REQUEST)
         raise
 
-    profile, _ = UserProfile.objects.get_or_create(user=request.user)
-    _activate_subscription(profile, order.plan)
+    from django.db import transaction
+    with transaction.atomic():
+        try:
+            order = PaymentOrder.objects.select_for_update().get(
+                razorpay_order_id=order_id,
+                user=request.user,
+                plan_id=plan_id_int,
+                status="created",
+            )
+        except PaymentOrder.DoesNotExist:
+            return Response({"error": "Order not found or already processed"}, status=status.HTTP_404_NOT_FOUND)
 
-    order.razorpay_payment_id = payment_id
-    order.status = "paid"
-    order.paid_at = timezone.now()
-    order.save(update_fields=["razorpay_payment_id", "status", "paid_at"])
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        # Never let a shorter plan (e.g. a Day Pass) overwrite an active paid
+        # plan that lasts longer; the payment is still recorded either way.
+        today = timezone.localdate()
+        new_expiry = _plan_expiry_for(order.plan, today)
+        has_longer_active_plan = (
+            profile.payment_status == "paid"
+            and profile.subscription_plan is not None
+            and profile.subscription_expiry is not None
+            and profile.subscription_expiry > new_expiry
+        )
+        if not has_longer_active_plan:
+            _activate_subscription(profile, order.plan)
+
+        order.razorpay_payment_id = payment_id
+        order.status = "paid"
+        order.paid_at = timezone.now()
+        order.save(update_fields=["razorpay_payment_id", "status", "paid_at"])
 
     return Response({
         "message": f"Payment successful. Subscribed to {order.plan.name}",
@@ -643,6 +713,7 @@ def verify_payment(request):
             "price": float(order.plan.price),
             "duration": order.plan.duration,
             "limit_minutes": order.plan.limit_minutes,
+            "plan_type": order.plan.plan_type,
         },
         "subscription_expiry": profile.subscription_expiry,
     })

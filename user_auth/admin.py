@@ -13,9 +13,9 @@ class InterestAdmin(admin.ModelAdmin):
 
 @admin.register(SubscriptionPlan)
 class SubscriptionPlanAdmin(admin.ModelAdmin):
-    list_display = ('name', 'price', 'duration')
+    list_display = ('name', 'price', 'duration', 'plan_type')
     fieldsets = (
-        (None, {'fields': ('name', 'price', 'duration', 'limit_minutes')}),
+        (None, {'fields': ('name', 'price', 'duration', 'limit_minutes', 'plan_type')}),
         ('Description', {'fields': ('description',)}),
     )
 

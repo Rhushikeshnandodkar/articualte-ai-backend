@@ -13,11 +13,21 @@ class Interest(models.Model):
     description = models.TextField()
 
 class SubscriptionPlan(models.Model):
+    PLAN_TYPE_CHOICES = [
+        ('monthly', 'Monthly'),
+        ('day_pass', 'Day Pass'),
+    ]
     name = models.CharField(max_length=255)
     description = models.TextField()
     price = models.DecimalField(max_digits=10, decimal_places=2)
     duration = models.IntegerField(default=30)
     limit_minutes = models.IntegerField(default=300, help_text="Monthly practice minutes included")
+    plan_type = models.CharField(
+        max_length=20,
+        choices=PLAN_TYPE_CHOICES,
+        default='monthly',
+        help_text="Day passes are valid for exactly 24 hours from the time of purchase.",
+    )
 
 
 class PaymentOrder(models.Model):
@@ -77,6 +87,9 @@ class UserProfile(models.Model):
     subscription_plan = models.ForeignKey(SubscriptionPlan, on_delete=models.CASCADE, null=True, blank=True)
     subscription_start_date = models.DateField(null=True, blank=True)
     subscription_expiry = models.DateField(null=True, blank=True)
+    # Precise expiry timestamp. Used for day passes so they expire exactly 24h
+    # after purchase (not at midnight). Null for monthly plans (date-based).
+    subscription_expires_at = models.DateTimeField(null=True, blank=True)
     payment_status = models.CharField(max_length=255, choices=[('paid', 'Paid'), ('unpaid', 'Unpaid')], default='unpaid')
     current_streak = models.IntegerField(default=0)
     longest_streak = models.IntegerField(default=0)

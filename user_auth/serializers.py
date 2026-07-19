@@ -100,7 +100,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'id', 'profession', 'goal', 'communication_level', 'bio', 'interests_text',
             'total_sessions', 'total_minutes_spoken', 'average_filler_words', 'average_pace_wpm',
             'confidence_score', 'clarity_score', 'subscription_plan',
-            'subscription_expiry', 'payment_status', 'subscription_active',
+            'subscription_expiry', 'subscription_expires_at', 'payment_status', 'subscription_active',
             'monthly_minutes_used', 'minutes_limit', 'minutes_remaining',
             'current_streak', 'longest_streak', 'total_practice_days',
             'created_at', 'updated_at',
@@ -118,6 +118,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'clarity_score',
             'subscription_plan',
             'subscription_expiry',
+            'subscription_expires_at',
             'payment_status',
             'monthly_minutes_used',
             'current_streak',
@@ -125,30 +126,33 @@ class ProfileSerializer(serializers.ModelSerializer):
             'total_practice_days',
         ]
 
+    @staticmethod
+    def _paid_not_expired(obj):
+        """True if a paid plan hasn't expired.
+
+        Prefers the precise timestamp (day passes: exactly 24h after purchase);
+        falls back to date-based expiry for monthly plans.
+        """
+        from django.utils import timezone
+        if obj.payment_status != 'paid':
+            return False
+        if obj.subscription_expires_at is not None:
+            return timezone.now() < obj.subscription_expires_at
+        return (
+            obj.subscription_expiry is not None
+            and obj.subscription_expiry >= timezone.localdate()
+        )
+
     def get_subscription_active(self, obj):
         """True only if user has a paid plan that hasn't expired."""
-        from django.utils import timezone
         plan = obj.subscription_plan
-        today = timezone.now().date()
-        if (
-            plan is not None
-            and obj.payment_status == 'paid'
-            and obj.subscription_expiry is not None
-            and obj.subscription_expiry >= today
-        ):
+        if plan is not None and self._paid_not_expired(obj):
             return True
         return plan is not None and (obj.payment_status != 'paid' and float(plan.price) == 0)
 
     def get_minutes_limit(self, obj):
-        from django.utils import timezone
         plan = obj.subscription_plan
-        today = timezone.now().date()
-        if (
-            plan is not None
-            and obj.payment_status == 'paid'
-            and obj.subscription_expiry is not None
-            and obj.subscription_expiry >= today
-        ):
+        if plan is not None and self._paid_not_expired(obj):
             return plan.limit_minutes
         return 10
 

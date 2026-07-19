@@ -159,7 +159,10 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# Local time zone drives "day" boundaries for streaks and daily topics.
+# (Day passes expire exactly 24h after purchase, tracked via a timestamp.)
+# Users are in India.
+TIME_ZONE = 'Asia/Kolkata'
 
 USE_I18N = True
 

@@ -433,19 +433,27 @@ def _compute_table_topic_score(conv: Conversation) -> int:
     return int(score)
 
 
+def _paid_not_expired(profile: UserProfile) -> bool:
+    """True if the paid plan has not yet expired.
+
+    Prefers the precise timestamp (day passes expire exactly 24h after purchase);
+    falls back to date-based expiry for monthly plans.
+    """
+    if profile.subscription_expires_at is not None:
+        return timezone.now() < profile.subscription_expires_at
+    return (
+        profile.subscription_expiry is not None
+        and profile.subscription_expiry >= timezone.localdate()
+    )
+
+
 def _get_active_plan_tier(profile: UserProfile) -> str:
     """
     Return 'free', 'builder', or 'performer' based on active subscription.
     A plan is active only if payment_status == 'paid', expiry is set, and not expired.
     """
-    today = timezone.now().date()
     plan = profile.subscription_plan
-    if (
-        plan is not None
-        and profile.payment_status == 'paid'
-        and profile.subscription_expiry is not None
-        and profile.subscription_expiry >= today
-    ):
+    if plan is not None and profile.payment_status == 'paid' and _paid_not_expired(profile):
         name = (plan.name or "").lower()
         if "builder" in name:
             return "builder"

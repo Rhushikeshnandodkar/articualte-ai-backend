@@ -8,7 +8,6 @@ FILLER_PATTERNS = [
     r"\bum\b",
     r"\buh\b",
     r"\buhm\b",
-    r"\blike\b",  # can overcount; use as rough metric
     r"\byou know\b",
     r"\bactually\b",
     r"\bbasically\b",
@@ -20,7 +19,9 @@ FILLER_PATTERNS = [
 ]
 
 # Filler words we count (include variations for report)
-FILLER_WORDS = ["um", "uh", "uhm", "you know", "actually", "basically", "well", "er", "ah", "like"]
+# Note: "like" is intentionally excluded — it's commonly used in normal speech
+# (e.g. "I like this") and over-counts as a false filler.
+FILLER_WORDS = ["um", "uh", "uhm", "you know", "actually", "basically", "well", "er", "ah"]
 
 
 def count_filler_words(text: str) -> int:
