@@ -109,6 +109,11 @@ EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
 # EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"  # only if you use port 465
 
+# Resend (HTTPS email API). Preferred in production: many hosts (e.g. DigitalOcean) block outbound SMTP.
+# user_auth/views.py uses Resend automatically whenever RESEND_API_KEY is set.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev").strip()
+
 # Never hang on an unreachable mail server (seconds).
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "15"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
