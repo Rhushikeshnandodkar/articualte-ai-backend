@@ -2,7 +2,14 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.models import User
 from django.utils.safestring import mark_safe
-from .models import Interest, SubscriptionPlan, Badge, UserProfile, PaymentOrder
+from .models import Interest, SubscriptionPlan, Badge, UserProfile, PaymentOrder, PlayPurchase
+
+
+@admin.register(PlayPurchase)
+class PlayPurchaseAdmin(admin.ModelAdmin):
+    list_display = ('user', 'plan', 'product_id', 'expires_at', 'created_at')
+    search_fields = ('user__username', 'user__email', 'product_id', 'order_id')
+    readonly_fields = ('purchase_token', 'created_at', 'updated_at')
 
 
 @admin.register(Interest)
@@ -13,9 +20,9 @@ class InterestAdmin(admin.ModelAdmin):
 
 @admin.register(SubscriptionPlan)
 class SubscriptionPlanAdmin(admin.ModelAdmin):
-    list_display = ('name', 'price', 'duration', 'plan_type')
+    list_display = ('name', 'price', 'duration', 'plan_type', 'google_product_id')
     fieldsets = (
-        (None, {'fields': ('name', 'price', 'duration', 'limit_minutes', 'plan_type')}),
+        (None, {'fields': ('name', 'price', 'duration', 'limit_minutes', 'plan_type', 'google_product_id')}),
         ('Description', {'fields': ('description',)}),
     )
 

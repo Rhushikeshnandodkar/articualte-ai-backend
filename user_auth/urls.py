@@ -11,6 +11,8 @@ from .views import (
     subscribe,
     create_order,
     verify_payment,
+    verify_google_purchase,
+    google_play_rtdn,
     google_login,
 )
 
@@ -27,4 +29,6 @@ urlpatterns = [
     path('subscription/subscribe/', subscribe, name='subscribe'),
     path('subscription/create-order/', create_order, name='create_order'),
     path('subscription/verify-payment/', verify_payment, name='verify_payment'),
+    path('subscription/verify-google-purchase/', verify_google_purchase, name='verify_google_purchase'),
+    path('subscription/google-rtdn/', google_play_rtdn, name='google_play_rtdn'),
 ]

@@ -443,6 +443,7 @@ def list_subscription_plans(request):
             "duration": p.duration,
             "limit_minutes": p.limit_minutes,
             "plan_type": p.plan_type,
+            "google_product_id": p.google_product_id,
         }
         for p in plans
     ]
@@ -717,6 +718,161 @@ def verify_payment(request):
         },
         "subscription_expiry": profile.subscription_expiry,
     })
+
+
+def _apply_play_purchase(user, plan, token, product_id, info):
+    """Record a verified Google Play purchase and apply it to the user's profile.
+
+    Safe to call repeatedly for the same token (app re-sync, renewals): the plan is only
+    (re)activated when needed, and subscription expiry always follows Google's expiry time.
+    Returns (profile, PlayPurchase). Raises ValueError if the token belongs to another user.
+    """
+    from django.db import transaction
+    from .models import PlayPurchase
+
+    with transaction.atomic():
+        existing = PlayPurchase.objects.select_for_update().filter(purchase_token=token).first()
+        if existing and existing.user_id != user.id:
+            raise ValueError("This purchase is already linked to another account.")
+        is_new = existing is None
+        if is_new:
+            purchase = PlayPurchase.objects.create(
+                user=user, plan=plan, product_id=product_id, purchase_token=token,
+                order_id=info.get("order_id", ""), expires_at=info.get("expires_at"),
+            )
+        else:
+            purchase = existing
+            purchase.order_id = info.get("order_id", purchase.order_id)
+            purchase.expires_at = info.get("expires_at", purchase.expires_at)
+            purchase.save(update_fields=["order_id", "expires_at", "updated_at"])
+
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        today = timezone.localdate()
+        is_day_pass = plan.plan_type == "day_pass"
+
+        # A day pass only ever activates once (when first recorded); subscriptions re-activate
+        # if the profile has dropped back to free while Google still reports them active.
+        needs_activation = is_new if is_day_pass else (is_new or profile.subscription_plan_id != plan.id)
+        if needs_activation:
+            new_expiry = _plan_expiry_for(plan, today)
+            has_longer_active_plan = (
+                profile.payment_status == "paid"
+                and profile.subscription_plan is not None
+                and profile.subscription_plan_id != plan.id
+                and profile.subscription_expiry is not None
+                and profile.subscription_expiry > new_expiry
+            )
+            if not has_longer_active_plan:
+                _activate_subscription(profile, plan)
+
+        # Subscriptions: follow Google's real expiry (covers renewals).
+        if not is_day_pass and profile.subscription_plan_id == plan.id and info.get("expires_at"):
+            new_date = info["expires_at"].astimezone(timezone.get_current_timezone()).date()
+            if profile.subscription_expiry and new_date > profile.subscription_expiry and not needs_activation:
+                # A renewal: new billing period starts, so monthly minutes reset.
+                profile.monthly_minutes_used = 0
+                profile.monthly_minutes_reset_at = today
+            profile.subscription_expiry = new_date
+            profile.subscription_expires_at = None
+            profile.payment_status = "paid"
+            profile.save(update_fields=[
+                "subscription_expiry", "subscription_expires_at", "payment_status",
+                "monthly_minutes_used", "monthly_minutes_reset_at",
+            ])
+    return profile, purchase
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def verify_google_purchase(request):
+    """
+    Verify a Google Play purchase made in the Android app and activate the plan.
+    Body: { "product_id": "<Play product id>", "purchase_token": "<token from the app>" }
+    Idempotent: the app also calls this to re-sync an existing subscription (renewals / restore).
+    """
+    from . import google_play
+
+    product_id = (request.data.get("product_id") or "").strip()
+    token = (request.data.get("purchase_token") or "").strip()
+    if not product_id or not token:
+        return Response({"error": "product_id and purchase_token are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    plan = SubscriptionPlan.objects.filter(google_product_id=product_id).first()
+    if plan is None:
+        return Response({"error": "Unknown product."}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        if plan.plan_type == "day_pass":
+            info = google_play.verify_one_time(product_id, token)
+        else:
+            info = google_play.verify_subscription(token)
+            if info["product_id"] != product_id:
+                return Response({"error": "Purchase does not match the requested product."}, status=status.HTTP_400_BAD_REQUEST)
+    except google_play.PlayVerificationError as e:
+        return Response({"error": str(e)}, status=e.status)
+
+    if not info["active"]:
+        return Response({"error": "This purchase is not active (pending, cancelled or expired)."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        profile, _purchase = _apply_play_purchase(request.user, plan, token, product_id, info)
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_409_CONFLICT)
+
+    return Response({
+        "message": f"Purchase verified. Subscribed to {plan.name}",
+        "plan": {
+            "id": plan.id,
+            "name": plan.name,
+            "price": float(plan.price),
+            "duration": plan.duration,
+            "limit_minutes": plan.limit_minutes,
+            "plan_type": plan.plan_type,
+        },
+        "subscription_expiry": profile.subscription_expiry,
+    })
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def google_play_rtdn(request):
+    """
+    Google Play Real-time Developer Notifications (Pub/Sub push). Keeps subscriptions in sync on
+    renewal. Configure the push endpoint as .../subscription/google-rtdn/?token=<GOOGLE_PLAY_RTDN_SECRET>.
+    Always answers 200 for well-formed requests so Pub/Sub does not retry forever.
+    """
+    import base64
+    import json
+    from . import google_play
+    from .models import PlayPurchase
+
+    secret = getattr(settings, "GOOGLE_PLAY_RTDN_SECRET", "")
+    if not secret or request.query_params.get("token") != secret:
+        return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        payload = json.loads(base64.b64decode(request.data["message"]["data"]).decode("utf-8"))
+    except Exception:
+        return Response({"error": "Bad notification"}, status=status.HTTP_400_BAD_REQUEST)
+
+    sub = payload.get("subscriptionNotification")
+    if not sub:
+        return Response({"ok": True})  # test / one-time / voided notifications: nothing to sync
+    token = sub.get("purchaseToken")
+    purchase = PlayPurchase.objects.filter(purchase_token=token).select_related("user", "plan").first()
+    if purchase is None:
+        return Response({"ok": True})  # not linked to a user yet; the app's verify call will handle it
+    try:
+        info = google_play.verify_subscription(token)
+        if info["active"]:
+            _apply_play_purchase(purchase.user, purchase.plan, token, purchase.product_id, info)
+        else:
+            purchase.expires_at = info.get("expires_at")
+            purchase.save(update_fields=["expires_at", "updated_at"])
+    except Exception:
+        logging.getLogger(__name__).exception("RTDN processing failed")
+        return Response({"error": "Processing failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return Response({"ok": True})
 
 
 @api_view(["POST"])

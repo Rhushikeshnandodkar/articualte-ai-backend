@@ -24,10 +24,15 @@ load_dotenv(BASE_DIR / ".env")
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-9sl#oq16j)5qnch^31-^9o$n*74w4pbk$ui911$$j)wnu6dya$'
+# In production set DJANGO_SECRET_KEY (the fallback below is only for local development).
+SECRET_KEY = os.getenv(
+    'DJANGO_SECRET_KEY',
+    'django-insecure-9sl#oq16j)5qnch^31-^9o$n*74w4pbk$ui911$$j)wnu6dya$',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Local development keeps DEBUG on by default; on the server set DJANGO_DEBUG=False.
+DEBUG = os.getenv('DJANGO_DEBUG', 'True').strip().lower() in ('1', 'true', 'yes', 'on')
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', "*"]
 
@@ -118,6 +123,14 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 
+# --- Google Play Billing (mobile app purchases) ---
+# Android package name of the app (must match Play Console + app.json).
+GOOGLE_PLAY_PACKAGE_NAME = os.getenv("GOOGLE_PLAY_PACKAGE_NAME", "com.rhushikesh.articulateai").strip()
+# Service-account key JSON (the whole file contents, on one line) with access to the Play Developer API.
+GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON", "").strip()
+# Shared secret for the Real-time Developer Notifications push URL (?token=...).
+GOOGLE_PLAY_RTDN_SECRET = os.getenv("GOOGLE_PLAY_RTDN_SECRET", "").strip()
+
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
@@ -130,7 +143,8 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        # On the server set DB_SQLITE_PATH to a file outside the git checkout (e.g. /var/lib/articulate/db.sqlite3).
+        'NAME': os.getenv('DB_SQLITE_PATH') or (BASE_DIR / 'db.sqlite3'),
     }
 }
 

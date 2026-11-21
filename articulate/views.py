@@ -44,10 +44,11 @@ def _get_env(name: str) -> str:
 
 
 def get_llm():
-    """Create Groq LLM client (llama-3.3-70b-versatile)."""
+    """Create Groq LLM client (model overridable via GROQ_MODEL env var)."""
     from langchain_groq import ChatGroq
     api_key = _get_env("GROQ_API_KEY")
-    return ChatGroq(model_name="llama-3.3-70b-versatile", api_key=api_key)
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
+    return ChatGroq(model_name=model, api_key=api_key)
 
 
 def get_elevenlabs_client():
@@ -189,14 +190,17 @@ def speech_to_text_groq(audio_file) -> str:
     api_key = _get_env("GROQ_API_KEY")
     client = GroqClient(api_key=api_key)
 
+    filename = "audio.webm"
     if hasattr(audio_file, "read"):
         audio_file.seek(0)
         file_content = audio_file.read()
+        # Mobile app uploads .m4a; browsers upload .webm. Keep the real extension.
+        filename = os.path.basename(getattr(audio_file, "name", "") or "") or filename
     else:
         file_content = audio_file
 
     transcription = client.audio.transcriptions.create(
-        file=("audio.webm", file_content),
+        file=(filename, file_content),
         model="whisper-large-v3",
         language="en",
         temperature=0.0,
@@ -1288,6 +1292,11 @@ def voice_chat(request):
             except Exception:
                 return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    print(
+        f"[Voice] request: content_type={request.content_type!r} "
+        f"files={list(request.FILES.keys())} "
+        f"audio={(audio_file.name, audio_file.size) if audio_file else None}"
+    )
     if audio_file:
         try:
             text = speech_to_text_groq(audio_file)

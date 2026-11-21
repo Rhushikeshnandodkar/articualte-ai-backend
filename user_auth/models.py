@@ -28,6 +28,15 @@ class SubscriptionPlan(models.Model):
         default='monthly',
         help_text="Day passes are valid for exactly 24 hours from the time of purchase.",
     )
+    google_product_id = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text="Google Play Console product ID for this plan (subscription ID, or one-time product ID for day passes). Leave empty for plans not sold via Google Play.",
+    )
+
+    def __str__(self):
+        return self.name
 
 
 class PaymentOrder(models.Model):
@@ -51,6 +60,23 @@ class PaymentOrder(models.Model):
         ordering = ['-created_at']
         verbose_name = 'Payment Order'
         verbose_name_plural = 'Payment Orders'
+
+class PlayPurchase(models.Model):
+    """A Google Play purchase (subscription or one-time) that was verified and applied to a user."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    plan = models.ForeignKey(SubscriptionPlan, on_delete=models.CASCADE)
+    product_id = models.CharField(max_length=100)
+    purchase_token = models.CharField(max_length=500, unique=True)
+    order_id = models.CharField(max_length=100, blank=True, default='')
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Play Purchase'
+        verbose_name_plural = 'Play Purchases'
+
 
 class Badge(models.Model):
     name = models.CharField(max_length=255)
