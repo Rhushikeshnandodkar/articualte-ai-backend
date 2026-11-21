@@ -109,6 +109,8 @@ EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
 # EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"  # only if you use port 465
 
+# Never hang on an unreachable mail server (seconds).
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "15"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 

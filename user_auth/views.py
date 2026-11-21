@@ -20,6 +20,21 @@ from .models import UserProfile, SubscriptionPlan, PaymentOrder
 
 
 def _send_email(subject, message, to_emails, from_email=None):
+    """Send email via Resend (production) or SMTP in a background thread.
+
+    Never raises and never blocks the request: if the mail provider is slow or unreachable
+    (e.g. outbound SMTP ports are blocked on the host) the API still answers immediately.
+    """
+    import threading
+
+    threading.Thread(
+        target=_send_email_blocking,
+        args=(subject, message, list(to_emails), from_email),
+        daemon=True,
+    ).start()
+
+
+def _send_email_blocking(subject, message, to_emails, from_email=None):
     """Send email via Resend (production) or SMTP. Never raises - logs on failure."""
     import logging
     logger = logging.getLogger(__name__)
