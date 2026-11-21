@@ -358,10 +358,9 @@ class ProfileView(generics.RetrieveUpdateAPIView):
         data = serializer.data
         data['suggested_topics'] = get_suggested_topics(instance)
         data['streak'] = streak_data
-        # Profile is considered complete when bio and interests are filled.
+        # Profile is complete once interests are filled. Bio is optional.
         data['has_completed_profile'] = bool(
-            (instance.bio and instance.bio.strip())
-            and (instance.interests_text and instance.interests_text.strip())
+            instance.interests_text and instance.interests_text.strip()
         )
         return Response(data)
 
@@ -369,9 +368,9 @@ class ProfileView(generics.RetrieveUpdateAPIView):
         instance = serializer.save(user=self.request.user)
         # Auto-assign the free plan when profile is first completed and user has no plan
         if instance.subscription_plan is None:
-            has_bio = bool(instance.bio and instance.bio.strip())
+            # Bio is optional, so interests alone complete the profile.
             has_interests = bool(instance.interests_text and instance.interests_text.strip())
-            if has_bio and has_interests:
+            if has_interests:
                 free_plan = SubscriptionPlan.objects.filter(price=0).order_by('id').first()
                 if free_plan:
                     _activate_subscription(instance, free_plan)
