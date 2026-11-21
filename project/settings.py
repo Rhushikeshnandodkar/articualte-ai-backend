@@ -36,6 +36,13 @@ DEBUG = os.getenv('DJANGO_DEBUG', 'True').strip().lower() in ('1', 'true', 'yes'
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', "*"]
 
+# Behind Nginx with HTTPS: trust the forwarded scheme so Django (admin login, CSRF) knows requests are secure.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# Extra trusted origins for CSRF (comma-separated), e.g. https://api.example.com
+CSRF_TRUSTED_ORIGINS = [
+    x.strip() for x in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if x.strip()
+]
+
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
