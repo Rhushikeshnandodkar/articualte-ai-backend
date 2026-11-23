@@ -43,12 +43,28 @@ def _get_env(name: str) -> str:
     return value
 
 
-def get_llm():
-    """Create Groq LLM client (model overridable via GROQ_MODEL env var)."""
+def get_llm(reasoning_effort=None):
+    """Create Groq LLM client (model overridable via GROQ_MODEL env var).
+
+    reasoning_effort: "low" | "medium" | "high" for reasoning models such as gpt-oss.
+    Hidden reasoning is billed as output tokens, so short practice replies use "low".
+    """
     from langchain_groq import ChatGroq
     api_key = _get_env("GROQ_API_KEY")
     model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
-    return ChatGroq(model_name=model, api_key=api_key)
+    kwargs = {}
+    if reasoning_effort:
+        kwargs["reasoning_effort"] = reasoning_effort
+    return ChatGroq(model_name=model, api_key=api_key, **kwargs)
+
+
+def get_chat_llm():
+    """LLM for live practice replies (opening question, follow-ups, free talk).
+
+    Uses low reasoning to cut cost; override with GROQ_CHAT_REASONING (low/medium/high, or "default").
+    """
+    effort = os.getenv("GROQ_CHAT_REASONING", "low").strip().lower()
+    return get_llm(None if effort in ("", "default", "none") else effort)
 
 
 def get_elevenlabs_client():
@@ -74,7 +90,7 @@ Practice topic (stay loosely connected to this): {topic}
 Your job: reply with exactly ONE short follow-up question. Nothing before or after it—no "Great!", no "I see", no advice.
 
 How to shape the question:
-- Use **simple, everyday English**. Short words, one clear idea. Easy to hear once and understand (aim for about 12–22 words, never more than one short sentence).
+- Use **simple, everyday English**. Short words, one clear idea. Easy to hear once and understand (aim for about 8–14 words, never more than one short sentence).
 - **Open-ended** so they can keep talking, but not heavy or exam-style. Avoid idioms, rare words, and long nested clauses.
 - **Listen to what they actually said:**
   - If they talk about a **book, story, movie, news event, or idea**, ask about **that content**—what happened, a character, why something mattered, what they think about a part of it. You can add a small personal angle ("What would you do…?") when it fits, but do **not** only ask vague personal questions if they were clearly discussing a text or plot.
@@ -129,7 +145,7 @@ Conversation topic (stay loosely connected to this): {topic}
 Your job: reply with exactly ONE short follow-up question.
 
 Hard rules:
-- Output EXACTLY one sentence, one line, <= 18 words.
+- Output EXACTLY one sentence, one line, <= 14 words.
 - It MUST be a question and end with a '?'.
 - No greetings. No praise. No advice. No lists. No extra text.
 - Use simple everyday English.
@@ -145,7 +161,7 @@ WELCOME_PROMPT = """You are a friendly English-speaking coach. Many users are st
 
 Write ONE plain-text opening only. Rules:
 - Do NOT use hi, hello, hey, welcome, good morning, or any greeting.
-- Start with one **simple, easy** question or short prompt about the topic. Use everyday words; keep it under ~35 words and easy to hear once.
+- Start with one **simple, easy** question or short prompt about the topic. Use everyday words; keep it under ~25 words and easy to hear once.
 - Invite a simple opinion, example, or short story—no hard vocabulary, no long or nested sentences.
 - Use the topic title and any context below in a natural way; do not read the title like a robot label.
 - No bullet points, no labels, no "today we will".
@@ -206,7 +222,7 @@ def speech_to_text_groq(audio_file) -> str:
 
     transcription = client.audio.transcriptions.create(
         file=(filename, file_content),
-        model="whisper-large-v3",
+        model=os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo").strip(),
         language="en",
         temperature=0.0,
     )
@@ -1252,7 +1268,7 @@ def voice_chat(request):
         desc = (conversation.topic_description or "").strip()
         context_block = f"Context for this session:\n{desc}\n" if desc else ""
         try:
-            llm = get_llm()
+            llm = get_chat_llm()
             prompt = WELCOME_PROMPT.format(topic=topic, context_block=context_block)
             response = llm.invoke(prompt)
             welcome_text = (response.content if hasattr(response, "content") else str(response)) or (
@@ -1348,7 +1364,7 @@ def voice_chat(request):
                 spoken_duration_seconds=spoken_duration if spoken_duration > 0 else None,
             )
 
-        llm = get_llm()
+        llm = get_chat_llm()
         prompt_template = build_voice_prompt(topic, history)
         prompt = prompt_template.format(question=text)
         response = llm.invoke(prompt)
@@ -1425,7 +1441,7 @@ def talking_agent_start(request):
     topic_title = "Random talk"
     opening_line = "What do you want to talk about today? If you're not sure, can we start with your favorite book?"
     try:
-        llm = get_llm()
+        llm = get_chat_llm()
         response = llm.invoke(prompt)
         raw = response.content if hasattr(response, "content") else str(response)
         raw = (raw or "").strip()
@@ -1564,7 +1580,7 @@ def talking_agent_voice(request):
                 spoken_duration_seconds=spoken_duration if spoken_duration > 0 else None,
             )
 
-        llm = get_llm()
+        llm = get_chat_llm()
         prompt_template = build_talking_agent_prompt(topic, history)
         prompt = prompt_template.format(question=text)
         response = llm.invoke(prompt)
