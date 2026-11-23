@@ -194,8 +194,13 @@ def speech_to_text_groq(audio_file) -> str:
     if hasattr(audio_file, "read"):
         audio_file.seek(0)
         file_content = audio_file.read()
-        # Mobile app uploads .m4a; browsers upload .webm. Keep the real extension.
+        # Mobile app uploads .m4a; browsers upload .webm (Chrome/Android) or .mp4 (iPhone Safari).
+        # Keep the real extension so Whisper decodes it; fall back to the upload's content type.
         filename = os.path.basename(getattr(audio_file, "name", "") or "") or filename
+        if not os.path.splitext(filename)[1].lower() in (".webm", ".mp4", ".m4a", ".mp3", ".wav", ".ogg", ".mpeg", ".mpga", ".flac"):
+            ctype = (getattr(audio_file, "content_type", "") or "").lower()
+            ext = ".mp4" if ("mp4" in ctype or "m4a" in ctype or "aac" in ctype) else ".ogg" if "ogg" in ctype else ".wav" if "wav" in ctype else ".webm"
+            filename = "audio" + ext
     else:
         file_content = audio_file
 
@@ -1311,7 +1316,7 @@ def voice_chat(request):
     print(f"[Voice] User said: {text!r} (conversation_id={conversation_id})")
     if not text:
         return Response(
-            {"error": "Missing or empty text. Say something and click Pause, or send audio."},
+            {"error": "We couldn't hear anything in that answer. Tap Start speaking and try again."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -1528,7 +1533,7 @@ def talking_agent_voice(request):
 
     if not text:
         return Response(
-            {"error": "Missing or empty text. Say something and click Pause, or send audio."},
+            {"error": "We couldn't hear anything in that answer. Tap Start speaking and try again."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
